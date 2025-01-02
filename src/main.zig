@@ -16,14 +16,18 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     var num_printed_chars: usize = 0;
 
     for (input, 0..) |character, index| {
+        // if we are at the end of a group, add a space
+        if (index % params.group_size == 0) {
+            try writer.print(" ", .{});
+            num_printed_chars += 1;
+        }
         // check to see if we are at the end of a column (or at the very first
         // character of the input)
         if (index % params.num_columns == 0) {
-            // if so, print a space and then the slice of the string the
-            // columns on the line represent
-            try writer.print(" ", .{});
+            // if so, print the slice of the string the columns on the line
+            // represent
             for (input[line_start_position..index]) |raw_char| {
-                if ('\n' == raw_char) {
+                if ('\n' == raw_char or '\t' == raw_char) {
                     try writer.print(".", .{});
                 } else {
                     try writer.print("{c}", .{raw_char});
@@ -33,13 +37,12 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
             line_start_position = index;
             num_printed_chars = 0;
             // add the index for the next line
-            try writer.print("{x:0>8}:", .{index});
+            try writer.print("{x:0>8}: ", .{index});
         }
-        // if we are at the end of a group, add a space
-        if (index % params.group_size == 0) {
-            try writer.print(" ", .{});
-            num_printed_chars += 1;
-        }
+        // print the hex value of the current character
+        try writer.print("{x:0>2}", .{character});
+        num_printed_chars += 2;
+
         // if we are at the end of the input
         if (index == input.len - 1) {
             // figure out how many spaces to put in so that the text lines up
@@ -48,13 +51,17 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
             for (0..num_spaces) |_| {
                 try writer.print(" ", .{});
             }
-            try writer.print(" {s}\n", .{input[line_start_position..]});
+
+            for (input[line_start_position..]) |raw_char| {
+                if ('\n' == raw_char or '\t' == raw_char) {
+                    try writer.print(".", .{});
+                } else {
+                    try writer.print("{c}", .{raw_char});
+                }
+            }
+            try writer.print("\n", .{});
             break;
         }
-        // print the hex value of the current character
-        try writer.print("{s}", .{std.fmt.fmtSliceHexLower(&.{character})});
-        //try writer.print("{x:0>2}", .{character});
-        num_printed_chars += 2;
     }
 }
 
@@ -93,23 +100,6 @@ pub fn main() !void {
         return err;
     };
     defer res.deinit();
-
-    // printing the passed arguments for debugging
-    if (res.args.help != 0) {
-        std.debug.print("--help\n", .{});
-    }
-    if (res.args.columns) |c| {
-        std.debug.print("--columns = {d}\n", .{c});
-    }
-    if (res.args.groupsize) |g| {
-        std.debug.print("--groupsize = {d}\n", .{g});
-    }
-    if (res.args.string) |s| {
-        std.debug.print("--string = {s}\n", .{s});
-    }
-    if (res.args.file) |f| {
-        std.debug.print("--file = {s}\n", .{f});
-    }
 
     // store details about how we are printing in this struct
     var current_print_params = printParams{};
