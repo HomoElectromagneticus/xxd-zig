@@ -115,13 +115,12 @@ pub fn main() !void {
         ((current_print_params.group_size * 2) + 1) *
         (current_print_params.num_columns / current_print_params.group_size);
 
-    // if we have a simple input string, print it using the spec'd parameters
+    // if we have a simple input string
     if (res.args.string) |s| {
         try print_output(stdout, current_print_params, s);
     }
 
-    // if we have an input file, we need to allocate memory, read in the file,
-    // and finally print it according the specified parameters
+    // if we have an input file
     if (res.args.file) |f| {
         // try to open the specified file
         const input_file = try std.fs.cwd().openFile(f, .{});
