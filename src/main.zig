@@ -21,7 +21,15 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
         if (index % params.num_columns == 0) {
             // if so, print a space and then the slice of the string the
             // columns on the line represent
-            try writer.print("  {s}\n", .{input[line_start_position..index]});
+            try writer.print(" ", .{});
+            for (input[line_start_position..index]) |raw_char| {
+                if ('\n' == raw_char) {
+                    try writer.print(".", .{});
+                } else {
+                    try writer.print("{c}", .{raw_char});
+                }
+            }
+            try writer.print("\n", .{});
             line_start_position = index;
             num_printed_chars = 0;
             // add the index for the next line
@@ -36,7 +44,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
         if (index == input.len - 1) {
             // figure out how many spaces to put in so that the text lines up
             // nicely
-            const num_spaces: usize = 1 + params.line_length - num_printed_chars;
+            const num_spaces: usize = params.line_length - num_printed_chars;
             for (0..num_spaces) |_| {
                 try writer.print(" ", .{});
             }
@@ -44,7 +52,8 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
             break;
         }
         // print the hex value of the current character
-        try writer.print("{x}", .{character});
+        try writer.print("{s}", .{std.fmt.fmtSliceHexLower(&.{character})});
+        //try writer.print("{x:0>2}", .{character});
         num_printed_chars += 2;
     }
 }
@@ -66,7 +75,8 @@ pub fn main() !void {
         \\-h, --help              Display this help and exit.
         \\-c, --columns <usize>   Format <columns> per line, default is 16, max 256
         \\-g, --groupsize <usize> Separate the output of in <groupsize> bytes, default 2
-        \\-s, --string <str>      An option parameter which can be specified multiple times.
+        \\-s, --string <str>      Optional input string
+        \\-f, --file <str>        Optional input file
         \\
     );
 
@@ -97,6 +107,9 @@ pub fn main() !void {
     if (res.args.string) |s| {
         std.debug.print("--string = {s}\n", .{s});
     }
+    if (res.args.file) |f| {
+        std.debug.print("--file = {s}\n", .{f});
+    }
 
     // store details about how we are printing in this struct
     var current_print_params = printParams{};
@@ -112,9 +125,22 @@ pub fn main() !void {
         ((current_print_params.group_size * 2) + 1) *
         (current_print_params.num_columns / current_print_params.group_size);
 
-    // if we have an input, print it using the specified parameters
+    // if we have a simple input string, print it using the spec'd parameters
     if (res.args.string) |s| {
         try print_output(stdout, current_print_params, s);
+    }
+
+    // if we have an input file, we need to allocate memory, read in the file,
+    // and finally print it according the specified parameters
+    if (res.args.file) |f| {
+        // try to open the specified file
+        const input_file = try std.fs.cwd().openFile(f, .{});
+        defer input_file.close();
+        // allocate memory to store the file's raw data
+        const input_file_data = try input_file.readToEndAlloc(gpa.allocator(), 128);
+        defer gpa.allocator().free(input_file_data);
+        // try to print the hex using the spec'd parameters
+        try print_output(stdout, current_print_params, input_file_data);
     }
 
     try bw.flush(); // don't forget to flush!
