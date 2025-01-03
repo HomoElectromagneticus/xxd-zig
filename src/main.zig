@@ -7,7 +7,8 @@ const printParams = struct {
     group_size: usize = 2,
 };
 
-fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
+// TODO: figure out how to handle an input spanning multiple buffers
+fn print_output(writer: anytype, params: printParams, input: []const u8, input_length: usize) !void {
 
     // where in the input does the line start
     var line_start_position: usize = 0;
@@ -44,7 +45,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
         num_printed_chars += 2;
 
         // if we are at the end of the input
-        if (index == input.len - 1) {
+        if (index == input_length - 1) {
             // figure out how many spaces to put in so that the text lines up
             // nicely
             const num_spaces: usize = params.line_length - num_printed_chars;
@@ -52,14 +53,13 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
                 try writer.print(" ", .{});
             }
 
-            for (input[line_start_position..]) |raw_char| {
+            for (input[line_start_position..input_length]) |raw_char| {
                 if ('\n' == raw_char or '\t' == raw_char) {
                     try writer.print(".", .{});
                 } else {
                     try writer.print("{c}", .{raw_char});
                 }
             }
-            try writer.print("\n", .{});
             break;
         }
     }
@@ -117,19 +117,39 @@ pub fn main() !void {
 
     // if we have a simple input string
     if (res.args.string) |s| {
-        try print_output(stdout, current_print_params, s);
+        try print_output(stdout, current_print_params, s, s.len);
     }
 
     // if we have an input file
     if (res.args.file) |f| {
-        // try to open the specified file
-        const input_file = try std.fs.cwd().openFile(f, .{});
-        defer input_file.close();
-        // allocate memory to store the file's raw data
-        const input_file_data = try input_file.readToEndAlloc(gpa.allocator(), 128);
-        defer gpa.allocator().free(input_file_data);
-        // try to print the hex using the spec'd parameters
-        try print_output(stdout, current_print_params, input_file_data);
+        // Interpret the filepath
+        // We use `Z` version of `realpath` because Zig supports different types
+        // of Pointer/Array notation. In this case, our arguments are 0-terminated
+        // and that's the reason we use the `Z` variant.
+        // See also:
+        //  "Solving Common Pointer Conundrums - Loris Cro" on YouTube.
+        var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        const path = try std.fs.realpath(f, &path_buffer);
+
+        // open the file
+        // The `.{}` means use the default version of `File.OpenFlags`.
+        const file = try std.fs.openFileAbsolute(path, .{});
+        defer file.close();
+
+        // stream the file into memory and get the contents one chunk at a time
+        var buffered_file = std.io.bufferedReader(file.reader());
+        var file_contents_buffer: [4096]u8 = undefined;
+
+        // TODO: keep track of how many lines have been printed so that the
+        //       printed index is accurate. maybe printing the index should be
+        //       handled outside the print_output function?
+        // load data into the buffer and print it until the buffer is empty
+        while (true) {
+            const number_of_bytes_read: usize = try buffered_file.read(&file_contents_buffer);
+            if (number_of_bytes_read == 0) break; //no more data to read
+            try print_output(stdout, current_print_params, &file_contents_buffer, number_of_bytes_read);
+        }
+        try stdout.print("\n", .{});
     }
 
     try bw.flush(); // don't forget to flush!
