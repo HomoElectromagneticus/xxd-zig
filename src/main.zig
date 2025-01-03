@@ -123,11 +123,6 @@ pub fn main() !void {
     // if we have an input file
     if (res.args.file) |f| {
         // Interpret the filepath
-        // We use `Z` version of `realpath` because Zig supports different types
-        // of Pointer/Array notation. In this case, our arguments are 0-terminated
-        // and that's the reason we use the `Z` variant.
-        // See also:
-        //  "Solving Common Pointer Conundrums - Loris Cro" on YouTube.
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const path = try std.fs.realpath(f, &path_buffer);
 
