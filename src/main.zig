@@ -15,52 +15,57 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     var num_printed_chars: usize = 0;
 
     for (input, 0..) |character, index| {
-        // if we are at the end of a group, add a space
-        if (index % params.group_size == 0) {
-            try writer.print(" ", .{});
-            num_printed_chars += 1;
-        }
         // print the hex value of the current character
         try writer.print("{x:0>2}", .{character});
         num_printed_bytes += 1;
         num_printed_chars += 2;
-
-        // if we are at the end of the input
+        // if we are at the end of the input, print a space and break
         if (index == input.len - 1) {
-            // figure out how many spaces to put in so that the text lines up
-            // nicely
-            const num_spaces: usize = 1 + params.line_length - num_printed_chars;
-            for (0..num_spaces) |_| {
-                try writer.print(" ", .{});
-            }
-
-            for (input) |raw_char| {
-                if ('\n' == raw_char or '\t' == raw_char) {
-                    try writer.print(".", .{});
-                } else {
-                    try writer.print("{c}", .{raw_char});
-                }
-            }
+            try writer.print(" ", .{});
+            num_printed_chars += 1;
+            break;
+        }
+        // if we are at the end of a group, add a space
+        if ((index + 1) % params.group_size == 0) {
+            try writer.print(" ", .{});
+            num_printed_chars += 1;
         }
     }
+    // figure out how many spaces to put in so that the text lines up nicely
+    var num_spaces: usize = 0;
+    if (num_printed_bytes != params.num_columns) {
+        num_spaces += params.line_length -| num_printed_chars;
+    }
+
+    for (0..num_spaces) |_| {
+        try writer.print(" ", .{});
+    }
+
+    // print the input of the line as ascii characters
+    for (input) |raw_char| {
+        if ('\n' == raw_char or '\t' == raw_char) {
+            try writer.print(".", .{});
+        } else {
+            try writer.print("{c}", .{raw_char});
+        }
+    }
+    try writer.print("\n", .{});
     return num_printed_bytes;
 }
 
-fn print_output(writer: anytype, params: printParams, input: []const u8, file_pos: usize) !usize {
-    var new_file_pos = file_pos;
+fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
+    var new_file_pos: usize = 0;
 
-    // split the buffer into segments based on the number of columns specified
-    // via the command line arguments (or left as default (16))
+    // split the buffer into segments based on the number of columns / bytes
+    // specified via the command line arguments (default 16)
     var input_iterator = std.mem.window(u8, input, params.num_columns, params.num_columns);
 
     // loop through the buffer and print the output in chunks of the columns
     while (input_iterator.next()) |slice| {
         // print the file position
-        try writer.print("{x:0>8}:", .{new_file_pos});
+        try writer.print("{x:0>8}: ", .{new_file_pos});
         new_file_pos += try print_columns(writer, params, slice);
-        try writer.print("\n", .{});
     }
-    return new_file_pos;
 }
 
 pub fn main() !void {
@@ -109,40 +114,28 @@ pub fn main() !void {
     if (res.args.groupsize) |g| {
         print_params.group_size = g;
     }
-    print_params.line_length =
-        ((print_params.group_size * 2) + 1) *
+    // set the printed line length - it needs to be this complex to support
+    // odd numbers of columns
+    print_params.line_length = ((print_params.group_size * 2) + 1) *
         (print_params.num_columns / print_params.group_size);
+    if (print_params.num_columns % 2 != 0) print_params.line_length += 3;
 
     // if we have a simple input string
     if (res.args.string) |s| {
-        _ = try print_output(stdout, print_params, s, s.len);
+        try print_output(stdout, print_params, s);
     }
 
-    // TODO: figure out how to handle and input spanning multiple buffers
     // if we have an input file
     if (res.args.file) |f| {
         // Interpret the filepath
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const path = try std.fs.realpath(f, &path_buffer);
 
-        // open the file in read-only mode
-        const file = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
-        defer file.close();
+        // load the file into memory in a single allocation
+        const file_contents = try std.fs.cwd().readFileAlloc(gpa.allocator(), path, std.math.maxInt(usize));
+        defer gpa.allocator().free(file_contents);
 
-        // buffer the file into memory and get the contents one chunk at a time
-        var buffered_file = std.io.bufferedReader(file.reader());
-        var file_contents_buffer: [32]u8 = undefined;
-
-        // we'll need to keep track of where we are in the file
-        var file_pos: usize = 0;
-
-        // load data into the buffer and print it until the buffer is empty
-        while (true) {
-            const number_of_bytes_read: usize = try buffered_file.read(&file_contents_buffer);
-            if (number_of_bytes_read == 0) break; //no more data to read
-            file_pos += try print_output(stdout, print_params, &file_contents_buffer, file_pos);
-        }
-        try stdout.print("\n", .{});
+        try print_output(stdout, print_params, file_contents);
     }
 
     try bw.flush(); // don't forget to flush!
