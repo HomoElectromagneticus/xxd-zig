@@ -57,7 +57,12 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
 
     // split the buffer into segments based on the number of columns / bytes
     // specified via the command line arguments (default 16)
-    var input_iterator = std.mem.window(u8, input, params.num_columns, params.num_columns);
+    var input_iterator = std.mem.window(
+        u8,
+        input[0..params.stop_after],
+        params.num_columns,
+        params.num_columns,
+    );
 
     // loop through the buffer and print the output in chunks of the columns
     while (input_iterator.next()) |slice| {
@@ -107,7 +112,12 @@ pub fn main() !void {
 
     // print help message and quit if -h is passed in
     if (res.args.help != 0) {
-        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+        return clap.help(
+            std.io.getStdErr().writer(),
+            clap.Help,
+            &params,
+            .{},
+        );
     }
 
     // store details about how we are printing in this struct
@@ -135,7 +145,7 @@ pub fn main() !void {
             print_params.stop_after = s.len;
         }
 
-        try print_output(stdout, print_params, s[0..print_params.stop_after]);
+        try print_output(stdout, print_params, s);
     }
 
     // if we have an input file
@@ -145,7 +155,11 @@ pub fn main() !void {
         const path = try std.fs.realpath(f, &path_buffer);
 
         // load the file into memory in a single allocation
-        const file_contents = try std.fs.cwd().readFileAlloc(gpa.allocator(), path, std.math.maxInt(usize));
+        const file_contents = try std.fs.cwd().readFileAlloc(
+            gpa.allocator(),
+            path,
+            std.math.maxInt(usize),
+        );
         defer gpa.allocator().free(file_contents);
 
         // decide how much of the input to print
@@ -155,7 +169,7 @@ pub fn main() !void {
             print_params.stop_after = file_contents.len;
         }
 
-        try print_output(stdout, print_params, file_contents[0..print_params.stop_after]);
+        try print_output(stdout, print_params, file_contents);
     }
 
     try bw.flush(); // don't forget to flush!
