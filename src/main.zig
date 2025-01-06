@@ -5,6 +5,7 @@ const printParams = struct {
     line_length: usize = undefined,
     num_columns: usize = 16,
     group_size: usize = 2,
+    stop_after: usize = undefined,
 };
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -36,7 +37,6 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     if (num_printed_bytes != params.num_columns) {
         num_spaces += params.line_length -| num_printed_chars;
     }
-
     for (0..num_spaces) |_| {
         try writer.print(" ", .{});
     }
@@ -49,7 +49,6 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
             try writer.print("{c}", .{raw_char});
         }
     }
-    try writer.print("\n", .{});
     return num_printed_bytes;
 }
 
@@ -65,6 +64,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
         // print the file position
         try writer.print("{x:0>8}: ", .{new_file_pos});
         new_file_pos += try print_columns(writer, params, slice);
+        try writer.print("\n", .{});
     }
 }
 
@@ -87,6 +87,7 @@ pub fn main() !void {
         \\-g, --groupsize <usize> Separate the output of in <groupsize> bytes, default 2
         \\-s, --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
+        \\-l, --len <usize>       Stop writing afer <len> bytes
         \\
     );
 
@@ -104,30 +105,42 @@ pub fn main() !void {
     };
     defer res.deinit();
 
+    // print help message and quit if -h is passed in
+    if (res.args.help != 0) {
+        return clap.help(std.io.getStdErr().writer(), clap.Help, &params, .{});
+    }
+
     // store details about how we are printing in this struct
     var print_params = printParams{};
-    // setting the number of columns to use when printing (default 16)
+    // the number of columns to use when printing (default 16)
     if (res.args.columns) |c| {
         print_params.num_columns = c;
     }
-    // setting the output grouping when printing (default 2)
+    // the output grouping when printing (default 2)
     if (res.args.groupsize) |g| {
         print_params.group_size = g;
     }
-    // set the printed line length - it needs to be this complex to support
-    // odd numbers of columns
+    // the printed line length - it needs to be this complex to support odd
+    // numbers of columns
     print_params.line_length = ((print_params.group_size * 2) + 1) *
         (print_params.num_columns / print_params.group_size);
     if (print_params.num_columns % 2 != 0) print_params.line_length += 3;
 
     // if we have a simple input string
     if (res.args.string) |s| {
-        try print_output(stdout, print_params, s);
+        // decide how much of the input to print
+        if (res.args.len) |l| {
+            print_params.stop_after = l;
+        } else {
+            print_params.stop_after = s.len;
+        }
+
+        try print_output(stdout, print_params, s[0..print_params.stop_after]);
     }
 
     // if we have an input file
     if (res.args.file) |f| {
-        // Interpret the filepath
+        // interpret the filepath
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const path = try std.fs.realpath(f, &path_buffer);
 
@@ -135,7 +148,14 @@ pub fn main() !void {
         const file_contents = try std.fs.cwd().readFileAlloc(gpa.allocator(), path, std.math.maxInt(usize));
         defer gpa.allocator().free(file_contents);
 
-        try print_output(stdout, print_params, file_contents);
+        // decide how much of the input to print
+        if (res.args.len) |l| {
+            print_params.stop_after = l;
+        } else {
+            print_params.stop_after = file_contents.len;
+        }
+
+        try print_output(stdout, print_params, file_contents[0..print_params.stop_after]);
     }
 
     try bw.flush(); // don't forget to flush!
