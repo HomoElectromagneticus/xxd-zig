@@ -6,6 +6,7 @@ const printParams = struct {
     num_columns: usize = 16,
     group_size: usize = 2,
     stop_after: usize = undefined,
+    upper_case: bool = false,
 };
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -17,7 +18,11 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
 
     for (input, 0..) |character, index| {
         // print the hex value of the current character
-        try writer.print("{x:0>2}", .{character});
+        if (params.upper_case) {
+            try writer.print("{X:0>2}", .{character});
+        } else {
+            try writer.print("{x:0>2}", .{character});
+        }
         num_printed_bytes += 1;
         num_printed_chars += 2;
         // if we are at the end of the input, print a space and break
@@ -93,6 +98,7 @@ pub fn main() !void {
         \\-s, --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
         \\-l, --len <usize>       Stop writing afer <len> bytes
+        \\-u                      Use upper-case hex letters. Default is lower-case.
         \\
     );
 
@@ -135,6 +141,8 @@ pub fn main() !void {
     print_params.line_length = ((print_params.group_size * 2) + 1) *
         (print_params.num_columns / print_params.group_size);
     if (print_params.num_columns % 2 != 0) print_params.line_length += 3;
+
+    if (res.args.u != 0) print_params.upper_case = true;
 
     // if we have a simple input string
     if (res.args.string) |s| {
