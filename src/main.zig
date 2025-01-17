@@ -8,6 +8,7 @@ const printParams = struct {
     stop_after: usize = undefined,
     upper_case: bool = false,
     decimal: bool = false,
+    postscript: bool = false,
 };
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -61,6 +62,20 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
 fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     var new_file_pos: usize = 0;
 
+    // if the user asked for postscript plain hexdump style, just dump it all
+    // with no fancy formatting
+    if (params.postscript) {
+        for (input) |character| {
+            if (params.upper_case) {
+                try writer.print("{X:0>2}", .{character});
+            } else {
+                try writer.print("{x:0>2}", .{character});
+            }
+        }
+        try writer.print("\n", .{});
+        return;
+    }
+
     // split the buffer into segments based on the number of columns / bytes
     // specified via the command line arguments (default 16)
     var input_iterator = std.mem.window(
@@ -103,6 +118,7 @@ pub fn main() !void {
         \\-s, --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
         \\-l, --len <usize>       Stop writing afer <len> bytes
+        \\-p                      Output in postscript plain hexdump style
         \\-d                      Show offset in decimal and not hex
         \\-u                      Use upper-case hex letters. Default is lower-case.
         \\
@@ -151,6 +167,8 @@ pub fn main() !void {
     if (res.args.u != 0) print_params.upper_case = true;
 
     if (res.args.d != 0) print_params.decimal = true;
+
+    if (res.args.p != 0) print_params.postscript = true;
 
     // if we have a simple input string
     if (res.args.string) |s| {
