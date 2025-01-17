@@ -7,6 +7,7 @@ const printParams = struct {
     group_size: usize = 2,
     stop_after: usize = undefined,
     upper_case: bool = false,
+    decimal: bool = false,
 };
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -71,8 +72,12 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
 
     // loop through the buffer and print the output in chunks of the columns
     while (input_iterator.next()) |slice| {
-        // print the file position
-        try writer.print("{x:0>8}: ", .{new_file_pos});
+        // print the file position in hex (default) or decimal
+        if (params.decimal) {
+            try writer.print("{d:0>8}: ", .{new_file_pos});
+        } else {
+            try writer.print("{x:0>8}: ", .{new_file_pos});
+        }
         new_file_pos += try print_columns(writer, params, slice);
         try writer.print("\n", .{});
     }
@@ -98,6 +103,7 @@ pub fn main() !void {
         \\-s, --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
         \\-l, --len <usize>       Stop writing afer <len> bytes
+        \\-d                      Show offset in decimal and not hex
         \\-u                      Use upper-case hex letters. Default is lower-case.
         \\
     );
@@ -143,6 +149,8 @@ pub fn main() !void {
     if (print_params.num_columns % 2 != 0) print_params.line_length += 3;
 
     if (res.args.u != 0) print_params.upper_case = true;
+
+    if (res.args.d != 0) print_params.decimal = true;
 
     // if we have a simple input string
     if (res.args.string) |s| {
