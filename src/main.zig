@@ -65,7 +65,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     // if the user asked for postscript plain hexdump style, just dump it all
     // with no fancy formatting
     if (params.postscript) {
-        for (input) |character| {
+        for (input[0..params.stop_after]) |character| {
             if (params.upper_case) {
                 try writer.print("{X:0>2}", .{character});
             } else {
