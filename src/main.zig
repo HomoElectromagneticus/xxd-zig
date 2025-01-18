@@ -120,7 +120,7 @@ pub fn main() !void {
         \\-g, --groupsize <usize> Separate the output of in <groupsize> bytes, default 2
         \\    --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
-        \\-l, --len <usize>       Stop writing afer <len> bytes
+        \\-l, --len <usize>       Stop writing after <len> bytes
         \\-p                      Output in postscript plain hexdump style
         \\-d                      Show offset in decimal and not hex
         \\-u                      Use upper-case hex letters. Default is lower-case.
@@ -141,13 +141,28 @@ pub fn main() !void {
     };
     defer res.deinit();
 
-    // print help message and quit if -h or --help is passed in
+    // if -h or --help is passed in, print usage text, help text, then quit
     if (res.args.help != 0) {
+        const usage_notes =
+            \\Usage:
+            \\    xxd-zig [options]
+            \\
+            \\    If neither --string, -f, nor --file are set,
+            \\    the program will read from stdin.
+            \\
+            \\Options:
+        ;
+        try stdout.print("{s}\n", .{usage_notes});
+        try bw.flush();
+        const help_options = clap.HelpOptions{
+            .spacing_between_parameters = 1,
+            .max_width = 72, //TODO: set to current terminal size
+        };
         return clap.help(
             std.io.getStdErr().writer(),
             clap.Help,
             &params,
-            .{},
+            help_options,
         );
     }
 
