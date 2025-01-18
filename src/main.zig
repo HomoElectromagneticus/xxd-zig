@@ -9,6 +9,7 @@ const printParams = struct {
     upper_case: bool = false,
     decimal: bool = false,
     postscript: bool = false,
+    position_offset: usize = 0,
 };
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -48,7 +49,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
         try writer.print(" ", .{});
     }
 
-    // print the input of the line as ascii characters
+    // print the content of the line as ascii characters
     for (input) |raw_char| {
         if ('\n' == raw_char or '\t' == raw_char) {
             try writer.print(".", .{});
@@ -60,7 +61,8 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
 }
 
 fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
-    var new_file_pos: usize = 0;
+    // this variable is used to print the file position information for a row
+    var new_file_pos: usize = params.position_offset;
 
     // if the user asked for postscript plain hexdump style, just dump it all
     // with no fancy formatting
@@ -121,6 +123,7 @@ pub fn main() !void {
         \\    --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
         \\-l, --len <usize>       Stop writing after <len> bytes
+        \\-o, --off <usize>       Add an offset to the displayed file position
         \\-p                      Output in postscript plain hexdump style
         \\-d                      Show offset in decimal and not hex
         \\-u                      Use upper-case hex letters. Default is lower-case.
@@ -181,6 +184,11 @@ pub fn main() !void {
     print_params.line_length = ((print_params.group_size * 2) + 1) *
         (print_params.num_columns / print_params.group_size);
     if (print_params.num_columns % 2 != 0) print_params.line_length += 3;
+
+    // handle the position offset option if specified
+    if (res.args.off) |o| {
+        print_params.position_offset = o;
+    }
 
     if (res.args.p != 0) print_params.postscript = true;
 
