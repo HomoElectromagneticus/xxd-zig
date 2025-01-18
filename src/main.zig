@@ -99,10 +99,13 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
 }
 
 pub fn main() !void {
-    // stdout is for the actual output of your application
+    // stdout is for the actual output of the application
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
+
+    // stdin is for the actual input of the appplication
+    const stdin = std.io.getStdIn().reader();
 
     // need to allocate memory in order to parse the command-line args, handle
     // buffers, etc
@@ -115,7 +118,7 @@ pub fn main() !void {
         \\-h, --help              Display this help and exit.
         \\-c, --columns <usize>   Format <columns> per line, default is 16, max 256
         \\-g, --groupsize <usize> Separate the output of in <groupsize> bytes, default 2
-        \\-s, --string <str>      Optional input string
+        \\    --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
         \\-l, --len <usize>       Stop writing afer <len> bytes
         \\-p                      Output in postscript plain hexdump style
@@ -138,7 +141,7 @@ pub fn main() !void {
     };
     defer res.deinit();
 
-    // print help message and quit if -h is passed in
+    // print help message and quit if -h or --help is passed in
     if (res.args.help != 0) {
         return clap.help(
             std.io.getStdErr().writer(),
@@ -164,11 +167,11 @@ pub fn main() !void {
         (print_params.num_columns / print_params.group_size);
     if (print_params.num_columns % 2 != 0) print_params.line_length += 3;
 
-    if (res.args.u != 0) print_params.upper_case = true;
+    if (res.args.p != 0) print_params.postscript = true;
 
     if (res.args.d != 0) print_params.decimal = true;
 
-    if (res.args.p != 0) print_params.postscript = true;
+    if (res.args.u != 0) print_params.upper_case = true;
 
     // if we have a simple input string
     if (res.args.string) |s| {
@@ -205,6 +208,21 @@ pub fn main() !void {
 
         try print_output(stdout, print_params, file_contents);
     }
+
+    // if we have no specified input string or input file, we will read from
+    // stdin. we'll need to allocate memory since we don't know the size of
+    // the input from stdin at compile time
+    const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
+    defer gpa.allocator().free(stdin_contents);
+
+    // decide how much of the input to print
+    if (res.args.len) |l| {
+        print_params.stop_after = l;
+    } else {
+        print_params.stop_after = stdin_contents.len;
+    }
+
+    try print_output(stdout, print_params, stdin_contents);
 
     try bw.flush(); // don't forget to flush!
 }
