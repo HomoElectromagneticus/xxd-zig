@@ -61,13 +61,17 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
 }
 
 fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
+    // define how much of the input to print
+    var length = input.len;
+    if (params.stop_after != 0) length = params.stop_after;
+
     // this variable is used to print the file position information for a row
     var new_file_pos: usize = params.position_offset;
 
     // if the user asked for postscript plain hexdump style, just dump it all
     // with no fancy formatting
     if (params.postscript) {
-        for (input[0..params.stop_after]) |character| {
+        for (input[0..length]) |character| {
             if (params.upper_case) {
                 try writer.print("{X:0>2}", .{character});
             } else {
@@ -82,7 +86,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     // specified via the command line arguments (default 16)
     var input_iterator = std.mem.window(
         u8,
-        input[0..params.stop_after],
+        input[0..length],
         params.num_columns,
         params.num_columns,
     );
@@ -115,7 +119,6 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     // First we specify what parameters our program can take.
-    // We use `parseParamsComptime` to parse a string into an array of `Param(Help)`.
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit.
         \\-c, --columns <usize>   Format <columns> per line, default is 16, max 256
@@ -131,8 +134,7 @@ pub fn main() !void {
     );
 
     // Initialize our diagnostics, which can be used for reporting useful errors.
-    // This is optional. You can also pass `.{}` to `clap.parse` if you don't
-    // care about the extra information `Diagnostics` provides.
+    // This is optional for the clap library.
     var diag = clap.Diagnostic{};
     var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
         .diagnostic = &diag,
@@ -171,11 +173,12 @@ pub fn main() !void {
 
     // store details about how we are printing in this struct
     var print_params = printParams{};
-    // the number of columns to use when printing (default 16)
+
+    // the number of columns to use when printing
     if (res.args.columns) |c| {
         print_params.num_columns = c;
     }
-    // the output grouping when printing (default 2)
+    // the output grouping when printing
     if (res.args.groupsize) |g| {
         print_params.group_size = g;
     }
@@ -196,15 +199,12 @@ pub fn main() !void {
 
     if (res.args.u != 0) print_params.upper_case = true;
 
+    if (res.args.len) |l| {
+        print_params.stop_after = l;
+    }
+
     // if we have a simple input string
     if (res.args.string) |s| {
-        // decide how much of the input to print
-        if (res.args.len) |l| {
-            print_params.stop_after = l;
-        } else {
-            print_params.stop_after = s.len;
-        }
-
         try print_output(stdout, print_params, s);
     }
 
@@ -222,28 +222,14 @@ pub fn main() !void {
         );
         defer gpa.allocator().free(file_contents);
 
-        // decide how much of the input to print
-        if (res.args.len) |l| {
-            print_params.stop_after = l;
-        } else {
-            print_params.stop_after = file_contents.len;
-        }
-
         try print_output(stdout, print_params, file_contents);
     }
 
     // if we have no specified input string or input file, we will read from
     // stdin. we'll need to allocate memory since we don't know the size of
-    // the input from stdin at compile time
+    // what's coming from stdin at compile time
     const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
     defer gpa.allocator().free(stdin_contents);
-
-    // decide how much of the input to print
-    if (res.args.len) |l| {
-        print_params.stop_after = l;
-    } else {
-        print_params.stop_after = stdin_contents.len;
-    }
 
     try print_output(stdout, print_params, stdin_contents);
 
