@@ -5,6 +5,7 @@ const printParams = struct {
     line_length: usize = undefined,
     num_columns: usize = 16,
     group_size: usize = 2,
+    start_at: usize = 0,
     stop_after: usize = undefined,
     upper_case: bool = false,
     decimal: bool = false,
@@ -66,12 +67,12 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     if (params.stop_after != 0) length = params.stop_after;
 
     // this variable is used to print the file position information for a row
-    var new_file_pos: usize = params.position_offset;
+    var new_file_pos: usize = params.position_offset + params.start_at;
 
     // if the user asked for postscript plain hexdump style, just dump it all
     // with no fancy formatting
     if (params.postscript) {
-        for (input[0..length]) |character| {
+        for (input[params.start_at..length]) |character| {
             if (params.upper_case) {
                 try writer.print("{X:0>2}", .{character});
             } else {
@@ -86,7 +87,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     // specified via the command line arguments (default 16)
     var input_iterator = std.mem.window(
         u8,
-        input[0..length],
+        input[params.start_at..length],
         params.num_columns,
         params.num_columns,
     );
@@ -120,16 +121,17 @@ pub fn main() !void {
 
     // First we specify what parameters our program can take.
     const params = comptime clap.parseParamsComptime(
-        \\-h, --help              Display this help and exit.
-        \\-c, --columns <usize>   Format <columns> per line, default is 16, max 256
-        \\-g, --groupsize <usize> Separate the output of in <groupsize> bytes, default 2
+        \\-h, --help              Display this help and exit
+        \\-c, --columns <usize>   Format <columns> per line, default is 16
+        \\-g, --groupsize <usize> Group the output of in <groupsize> bytes, default 2
         \\    --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
         \\-l, --len <usize>       Stop writing after <len> bytes
         \\-o, --off <usize>       Add an offset to the displayed file position
         \\-p                      Output in postscript plain hexdump style
         \\-d                      Show offset in decimal and not hex
-        \\-u                      Use upper-case hex letters. Default is lower-case.
+        \\-s, --seek <usize>      Start at <usize> bytes absolute
+        \\-u                      Use upper-case hex letters, default is lower-case
         \\
     );
 
@@ -196,6 +198,10 @@ pub fn main() !void {
     if (res.args.p != 0) print_params.postscript = true;
 
     if (res.args.d != 0) print_params.decimal = true;
+
+    if (res.args.seek) |s| {
+        print_params.start_at = s;
+    }
 
     if (res.args.u != 0) print_params.upper_case = true;
 
