@@ -3,15 +3,15 @@ const clap = @import("clap");
 
 const printParams = struct {
     binary: bool = false,
-    line_length: usize = undefined,
     num_columns: usize = 16,
     group_size: usize = 2,
-    start_at: usize = 0,
     stop_after: usize = undefined,
-    upper_case: bool = false,
-    decimal: bool = false,
-    postscript: bool = false,
     position_offset: usize = 0,
+    postscript: bool = false,
+    decimal: bool = false,
+    start_at: usize = 0,
+    upper_case: bool = false,
+    line_length: usize = undefined,
 };
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -132,14 +132,14 @@ pub fn main() !void {
     // First we specify what parameters our program can take.
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit
-        \\-b                      Binary digit dump (default is hex)
+        \\-b                      Binary digit dump, default is hex
         \\-c, --columns <usize>   Format <columns> per line, default is 16
         \\-g, --groupsize <usize> Group the output of in <groupsize> bytes, default 2
         \\    --string <str>      Optional input string
         \\-f, --file <str>        Optional input file
         \\-l, --len <usize>       Stop writing after <len> bytes
         \\-o, --off <usize>       Add an offset to the displayed file position
-        \\-p                      Output in postscript plain hexdump style
+        \\-p                      Plain dump, no formatting
         \\-d                      Show offset in decimal and not hex
         \\-s, --seek <usize>      Start at <usize> bytes absolute
         \\-u                      Use upper-case hex letters, default is lower-case
@@ -195,14 +195,22 @@ pub fn main() !void {
         print_params.num_columns = 6;
     }
 
-    // the number of columns to use when printing
-    if (res.args.columns) |c| {
-        print_params.num_columns = c;
-    }
-    // the output grouping when printing
-    if (res.args.groupsize) |g| {
-        print_params.group_size = g;
-    }
+    if (res.args.columns) |c| print_params.num_columns = c;
+
+    if (res.args.groupsize) |g| print_params.group_size = g;
+
+    if (res.args.len) |l| print_params.stop_after = l;
+
+    if (res.args.off) |o| print_params.position_offset = o;
+
+    if (res.args.p != 0) print_params.postscript = true;
+
+    if (res.args.d != 0) print_params.decimal = true;
+
+    if (res.args.seek) |s| print_params.start_at = s;
+
+    if (res.args.u != 0) print_params.upper_case = true;
+
     // the printed line length - useful for ensuring nice text alignment
     if (print_params.binary == false) {
         print_params.line_length = (print_params.num_columns * 2) +
@@ -214,25 +222,6 @@ pub fn main() !void {
         if (print_params.num_columns % 2 != 0 and print_params.group_size != 1) {
             print_params.line_length += 1;
         }
-    }
-
-    // handle the position offset option if specified
-    if (res.args.off) |o| {
-        print_params.position_offset = o;
-    }
-
-    if (res.args.p != 0) print_params.postscript = true;
-
-    if (res.args.d != 0) print_params.decimal = true;
-
-    if (res.args.seek) |s| {
-        print_params.start_at = s;
-    }
-
-    if (res.args.u != 0) print_params.upper_case = true;
-
-    if (res.args.len) |l| {
-        print_params.stop_after = l;
     }
 
     // if we have a simple input string
