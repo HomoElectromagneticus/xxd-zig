@@ -2,6 +2,7 @@ const std = @import("std");
 const clap = @import("clap");
 
 const printParams = struct {
+    binary: bool = false,
     line_length: usize = undefined,
     num_columns: usize = 16,
     group_size: usize = 2,
@@ -21,11 +22,16 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     var num_printed_chars: usize = 0;
 
     for (input, 0..) |character, index| {
-        // print the hex value of the current character
-        if (params.upper_case) {
-            try writer.print("{X:0>2}", .{character});
+        if (params.binary) {
+            try writer.print("{b:0>8}", .{character});
+            num_printed_chars += 6;
         } else {
-            try writer.print("{x:0>2}", .{character});
+            // print the hex value of the current character
+            if (params.upper_case) {
+                try writer.print("{X:0>2}", .{character});
+            } else {
+                try writer.print("{x:0>2}", .{character});
+            }
         }
         num_printed_bytes += 1;
         num_printed_chars += 2;
@@ -44,7 +50,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     // figure out how many spaces to put in so that the text lines up nicely
     var num_spaces: usize = 0;
     if (num_printed_bytes != params.num_columns) {
-        num_spaces += params.line_length -| num_printed_chars;
+        num_spaces += params.line_length - num_printed_chars;
     }
     for (0..num_spaces) |_| {
         try writer.print(" ", .{});
@@ -73,10 +79,14 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     // with no fancy formatting
     if (params.postscript) {
         for (input[params.start_at..length]) |character| {
-            if (params.upper_case) {
-                try writer.print("{X:0>2}", .{character});
+            if (params.binary) {
+                try writer.print("{b:0>8}", .{character});
             } else {
-                try writer.print("{x:0>2}", .{character});
+                if (params.upper_case) {
+                    try writer.print("{X:0>2}", .{character});
+                } else {
+                    try writer.print("{x:0>2}", .{character});
+                }
             }
         }
         try writer.print("\n", .{});
@@ -122,6 +132,7 @@ pub fn main() !void {
     // First we specify what parameters our program can take.
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit
+        \\-b                      Binary digit dump (default is hex)
         \\-c, --columns <usize>   Format <columns> per line, default is 16
         \\-g, --groupsize <usize> Group the output of in <groupsize> bytes, default 2
         \\    --string <str>      Optional input string
@@ -176,6 +187,14 @@ pub fn main() !void {
     // store details about how we are printing in this struct
     var print_params = printParams{};
 
+    // setting to binary output also changes other parameters to reasonable
+    // values (this can be overridden)
+    if (res.args.b != 0) {
+        print_params.binary = true;
+        print_params.group_size = 1;
+        print_params.num_columns = 6;
+    }
+
     // the number of columns to use when printing
     if (res.args.columns) |c| {
         print_params.num_columns = c;
@@ -184,11 +203,18 @@ pub fn main() !void {
     if (res.args.groupsize) |g| {
         print_params.group_size = g;
     }
-    // the printed line length - it needs to be this complex to support odd
-    // numbers of columns
-    print_params.line_length = ((print_params.group_size * 2) + 1) *
-        (print_params.num_columns / print_params.group_size);
-    if (print_params.num_columns % 2 != 0) print_params.line_length += 3;
+    // the printed line length - useful for ensuring nice text alignment
+    if (print_params.binary == false) {
+        print_params.line_length = (print_params.num_columns * 2) +
+            (print_params.num_columns / print_params.group_size);
+        if (print_params.num_columns % 2 != 0) print_params.line_length += 1;
+    } else {
+        print_params.line_length = (print_params.num_columns * 8) +
+            (print_params.num_columns / print_params.group_size);
+        if (print_params.num_columns % 2 != 0 and print_params.group_size != 1) {
+            print_params.line_length += 1;
+        }
+    }
 
     // handle the position offset option if specified
     if (res.args.off) |o| {
@@ -212,6 +238,8 @@ pub fn main() !void {
     // if we have a simple input string
     if (res.args.string) |s| {
         try print_output(stdout, print_params, s);
+        try bw.flush(); // don't forget to flush!
+        return;
     }
 
     // if we have an input file
@@ -229,6 +257,8 @@ pub fn main() !void {
         defer gpa.allocator().free(file_contents);
 
         try print_output(stdout, print_params, file_contents);
+        try bw.flush(); // don't forget to flush!
+        return;
     }
 
     // if we have no specified input string or input file, we will read from
