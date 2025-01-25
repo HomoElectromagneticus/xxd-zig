@@ -223,15 +223,10 @@ pub fn main() !void {
         }
     }
 
-    // if we have an input string
-    if (res.args.string) |s| {
+    // choose how to print the output based on where the input comes from
+    if (res.args.string) |s| { //from an input string
         try print_output(stdout, print_params, s);
-        try bw.flush(); // don't forget to flush!
-        return;
-    }
-
-    // if we have an input file
-    if (res.args.file) |f| {
+    } else if (res.args.file) |f| { //from an input file
         // interpret the filepath
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const path = try std.fs.realpath(f, &path_buffer);
@@ -245,17 +240,13 @@ pub fn main() !void {
         defer gpa.allocator().free(file_contents);
 
         try print_output(stdout, print_params, file_contents);
-        try bw.flush(); // don't forget to flush!
-        return;
+    } else { //from stdin
+        // we'll need to allocate memory since we don't know the size of what's
+        // coming from stdin at compile time
+        const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
+        defer gpa.allocator().free(stdin_contents);
+
+        try print_output(stdout, print_params, stdin_contents);
     }
-
-    // if we have no specified input string or input file, we will read from
-    // stdin. we'll need to allocate memory since we don't know the size of
-    // what's coming from stdin at compile time
-    const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
-    defer gpa.allocator().free(stdin_contents);
-
-    try print_output(stdout, print_params, stdin_contents);
-
     try bw.flush(); // don't forget to flush!
 }
