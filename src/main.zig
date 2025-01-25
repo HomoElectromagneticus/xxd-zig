@@ -20,11 +20,13 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     // number of printed characters of translated input (not including the
     // index markers on the left!)
     var num_printed_chars: usize = 0;
+    // number of spaces for lining up the ascii characters in the final row
+    var num_spaces: usize = 0;
 
     for (input, 0..) |character, index| {
         if (params.binary) {
             try writer.print("{b:0>8}", .{character});
-            num_printed_chars += 6;
+            num_printed_chars += 8;
         } else {
             // print the hex value of the current character
             if (params.upper_case) {
@@ -32,9 +34,9 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
             } else {
                 try writer.print("{x:0>2}", .{character});
             }
+            num_printed_chars += 2;
         }
         num_printed_bytes += 1;
-        num_printed_chars += 2;
         // if we are at the end of the input, print a space and break
         if (index == input.len - 1) {
             try writer.print(" ", .{});
@@ -47,15 +49,14 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
             num_printed_chars += 1;
         }
     }
-    // figure out how many spaces to put in so that the text lines up nicely
-    var num_spaces: usize = 0;
+    // if it's the last part of the input, we need to line up the ascii text
+    // with the previous columns
     if (num_printed_bytes != params.num_columns) {
         num_spaces += params.line_length - num_printed_chars;
+        for (0..num_spaces) |_| {
+            try writer.print(" ", .{});
+        }
     }
-    for (0..num_spaces) |_| {
-        try writer.print(" ", .{});
-    }
-
     // print the content of the line as ascii characters
     for (input) |raw_char| {
         if ('\n' == raw_char or '\t' == raw_char) {
@@ -73,10 +74,9 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     if (params.stop_after != 0) length = params.stop_after;
 
     // this variable is used to print the file position information for a row
-    var new_file_pos: usize = params.position_offset + params.start_at;
+    var file_pos: usize = params.position_offset + params.start_at;
 
-    // if the user asked for postscript plain hexdump style, just dump it all
-    // with no fancy formatting
+    // if the user asked for plain dump, just dump everything no formatting
     if (params.postscript) {
         for (input[params.start_at..length]) |character| {
             if (params.binary) {
@@ -106,11 +106,11 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     while (input_iterator.next()) |slice| {
         // print the file position in hex (default) or decimal
         if (params.decimal) {
-            try writer.print("{d:0>8}: ", .{new_file_pos});
+            try writer.print("{d:0>8}: ", .{file_pos});
         } else {
-            try writer.print("{x:0>8}: ", .{new_file_pos});
+            try writer.print("{x:0>8}: ", .{file_pos});
         }
-        new_file_pos += try print_columns(writer, params, slice);
+        file_pos += try print_columns(writer, params, slice);
         try writer.print("\n", .{});
     }
 }
@@ -129,7 +129,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    // First we specify what parameters our program can take.
+    // specify what parameters our program can take via clap
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit
         \\-b                      Binary digit dump, default is hex
@@ -146,9 +146,9 @@ pub fn main() !void {
         \\
     );
 
-    // Initialize our diagnostics, which can be used for reporting useful errors.
-    // This is optional for the clap library.
+    // initialize the clap diagnostics, used for reporting errors. is optional
     var diag = clap.Diagnostic{};
+    // parse the command-line arguments
     var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
         .diagnostic = &diag,
         .allocator = gpa.allocator(),
@@ -184,7 +184,6 @@ pub fn main() !void {
         );
     }
 
-    // store details about how we are printing in this struct
     var print_params = printParams{};
 
     // setting to binary output also changes other parameters to reasonable
@@ -224,7 +223,7 @@ pub fn main() !void {
         }
     }
 
-    // if we have a simple input string
+    // if we have an input string
     if (res.args.string) |s| {
         try print_output(stdout, print_params, s);
         try bw.flush(); // don't forget to flush!
