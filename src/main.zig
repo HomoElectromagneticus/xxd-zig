@@ -59,10 +59,12 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     }
     // print the content of the line as ascii characters
     for (input) |raw_char| {
-        if ('\n' == raw_char or '\t' == raw_char) {
-            try writer.print(".", .{});
-        } else {
+        // printable ascii characters are all within 32 to 176. every other
+        // character should be a "." as xxd does it
+        if (raw_char >= 32 and raw_char <= 126) {
             try writer.print("{c}", .{raw_char});
+        } else {
+            try writer.print(".", .{});
         }
     }
     return num_printed_bytes;
