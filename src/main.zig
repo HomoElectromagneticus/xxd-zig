@@ -1,6 +1,11 @@
 const std = @import("std");
 const clap = @import("clap");
 
+const Color = enum {
+    green,
+    yellow,
+};
+
 const printParams = struct {
     binary: bool = false,
     num_columns: usize = 16,
@@ -14,6 +19,20 @@ const printParams = struct {
     line_length: usize = undefined,
     colorize: bool = true,
 };
+
+fn colorize(writer: anytype, color: Color) !void {
+    if (color == Color.green) {
+        //                bold ----\ green ---\
+        try writer.print("\u{001b}[1m\u{001b}[32m", .{});
+    } else if (color == Color.yellow) {
+        //                bold ----\ yellow --\
+        try writer.print("\u{001b}[1m\u{001b}[33m", .{});
+    }
+}
+
+fn uncolor(writer: anytype) !void {
+    try writer.print("\u{001b}[0m", .{});
+}
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
     // amount of bytes converted into hex
@@ -30,14 +49,12 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
             try writer.print("{b:0>8}", .{character});
             num_printed_chars += 8;
         } else {
-            // handle color
-            if (params.colorize) {
-                try writer.print("\u{001b}\u{001b}[32m\u{001b}[1m", .{});
-            }
-            // if the character is not a printable ascii character, it should
-            // be printed in yellow
+            // handle colors. if the character is not a printable ascii char,
+            // it should be printed in yellow. otherwise green
             if ((character < 32 or character > 126) and params.colorize) {
-                try writer.print("\u{001b}\u{001b}[33m\u{001b}[1m", .{});
+                try colorize(writer, Color.yellow);
+            } else if (params.colorize) {
+                try colorize(writer, Color.green);
             }
             // print the hex value of the current character
             if (params.upper_case) {
@@ -46,10 +63,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
                 try writer.print("{x:0>2}", .{character});
             }
             num_printed_chars += 2;
-            // turn off color
-            if (params.colorize) {
-                try writer.print("\u{001b}[0m", .{});
-            }
+            if (params.colorize) try uncolor(writer); // reset color
         }
         num_printed_bytes += 1;
         // if we are at the end of the input, print a space and break
@@ -78,23 +92,16 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     // print the content of the line as ascii characters
     for (input) |raw_char| {
         // handle color
-        if (params.colorize) {
-            try writer.print("\u{001b}\u{001b}[32m\u{001b}[1m", .{});
-        }
+        if (params.colorize) try colorize(writer, Color.green);
         // printable ascii characters are all within 32 to 176. every other
         // character should be a "." as xxd does it
         if (raw_char >= 32 and raw_char <= 126) {
             try writer.print("{c}", .{raw_char});
         } else {
-            if (params.colorize) {
-                try writer.print("\u{001b}\u{001b}[33m\u{001b}[1m", .{});
-            }
+            if (params.colorize) try colorize(writer, Color.yellow);
             try writer.print(".", .{});
         }
-        // turn off color
-        if (params.colorize) {
-            try writer.print("\u{001b}[0m", .{});
-        }
+        if (params.colorize) try uncolor(writer); //turn off color
     }
     return num_printed_bytes;
 }
@@ -165,7 +172,7 @@ pub fn main() !void {
         \\-h, --help              Display this help and exit
         \\-b                      Binary digit dump, default is hex
         \\-c, --columns <INT>     Write <INT> per line, default is 16
-        \\-g, --groupsize <INT>   Group the output of in <INT> bytes, default 2
+        \\-g, --groupsize <INT>   Group the output in <INT> bytes, default 2
         \\    --string <STR>      Optional input string (ignores FILENAME)
         \\-l, --len <INT>         Stop writing after <INT> bytes 
         \\-o, --off <INT>         Add an offset to the displayed file position
@@ -173,12 +180,12 @@ pub fn main() !void {
         \\-d                      Show offset in decimal and not hex
         \\-s, --seek <INT>        Start at <INT> bytes absolute
         \\-u                      Use upper-case hex letters, default is lower-case
-        \\-R                      Boring output (no colors)
+        \\-R                      Disable color output
         \\<FILENAME>
     );
 
     // custom parsing to enable the argument strings for the help text to be
-    // more easy to interpret
+    // more easy to interpret for the user
     const parsers = comptime .{
         .STR = clap.parsers.string,
         .INT = clap.parsers.int(usize, 10),
