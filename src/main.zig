@@ -135,23 +135,30 @@ pub fn main() !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit
         \\-b                      Binary digit dump, default is hex
-        \\-c, --columns <usize>   Format <columns> per line, default is 16
-        \\-g, --groupsize <usize> Group the output of in <groupsize> bytes, default 2
-        \\    --string <str>      Optional input string
-        \\-f, --file <str>        Optional input file
-        \\-l, --len <usize>       Stop writing after <len> bytes
-        \\-o, --off <usize>       Add an offset to the displayed file position
+        \\-c, --columns <INT>     Write <INT> per line, default is 16
+        \\-g, --groupsize <INT>   Group the output of in <INT> bytes, default 2
+        \\    --string <STR>      Optional input string (ignores FILENAME)
+        \\-l, --len <INT>         Stop writing after <INT> bytes 
+        \\-o, --off <INT>         Add an offset to the displayed file position
         \\-p                      Plain dump, no formatting
         \\-d                      Show offset in decimal and not hex
-        \\-s, --seek <usize>      Start at <usize> bytes absolute
+        \\-s, --seek <INT>        Start at <INT> bytes absolute
         \\-u                      Use upper-case hex letters, default is lower-case
-        \\
+        \\ <FILENAME>
     );
+
+    // custom parsing to enable the argument strings for the help text to be
+    // more easy to interpret
+    const parsers = comptime .{
+        .STR = clap.parsers.string,
+        .INT = clap.parsers.int(usize, 10),
+        .FILENAME = clap.parsers.string,
+    };
 
     // initialize the clap diagnostics, used for reporting errors. is optional
     var diag = clap.Diagnostic{};
     // parse the command-line arguments
-    var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+    var res = clap.parse(clap.Help, &params, parsers, .{
         .diagnostic = &diag,
         .allocator = gpa.allocator(),
     }) catch |err| {
@@ -165,9 +172,9 @@ pub fn main() !void {
     if (res.args.help != 0) {
         const usage_notes =
             \\Usage:
-            \\    xxd-zig [options]
+            \\    xxd-zig [options] [filename]
             \\
-            \\    If neither --string, -f, nor --file are set,
+            \\    If --string is not set and a filename not given,
             \\    the program will read from stdin.
             \\
             \\Options:
@@ -228,10 +235,10 @@ pub fn main() !void {
     // choose how to print the output based on where the input comes from
     if (res.args.string) |s| { //from an input string
         try print_output(stdout, print_params, s);
-    } else if (res.args.file) |f| { //from an input file
+    } else if (res.positionals.len > 0) { //from an input file
         // interpret the filepath
         var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const path = try std.fs.realpath(f, &path_buffer);
+        const path = try std.fs.realpath(res.positionals[0], &path_buffer);
 
         // load the file into memory in a single allocation
         const file_contents = try std.fs.cwd().readFileAlloc(
