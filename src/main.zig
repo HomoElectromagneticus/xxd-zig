@@ -12,6 +12,7 @@ const printParams = struct {
     start_at: usize = 0,
     upper_case: bool = false,
     line_length: usize = undefined,
+    colorize: bool = true,
 };
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -25,9 +26,19 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
 
     for (input, 0..) |character, index| {
         if (params.binary) {
+            // no color for binary ouput - this is what xxd does as well
             try writer.print("{b:0>8}", .{character});
             num_printed_chars += 8;
         } else {
+            // handle color
+            if (params.colorize) {
+                try writer.print("\u{001b}\u{001b}[32m\u{001b}[1m", .{});
+            }
+            // if the character is not a printable ascii character, it should
+            // be printed in yellow
+            if ((character < 32 or character > 126) and params.colorize) {
+                try writer.print("\u{001b}\u{001b}[33m\u{001b}[1m", .{});
+            }
             // print the hex value of the current character
             if (params.upper_case) {
                 try writer.print("{X:0>2}", .{character});
@@ -35,6 +46,10 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
                 try writer.print("{x:0>2}", .{character});
             }
             num_printed_chars += 2;
+            // turn off color
+            if (params.colorize) {
+                try writer.print("\u{001b}[0m", .{});
+            }
         }
         num_printed_bytes += 1;
         // if we are at the end of the input, print a space and break
@@ -53,18 +68,32 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     // with the previous columns
     if (num_printed_bytes != params.num_columns) {
         num_spaces += params.line_length - num_printed_chars;
+
         for (0..num_spaces) |_| {
             try writer.print(" ", .{});
         }
     }
+    // add an extra space to copy xxd
+    try writer.print(" ", .{});
     // print the content of the line as ascii characters
     for (input) |raw_char| {
+        // handle color
+        if (params.colorize) {
+            try writer.print("\u{001b}\u{001b}[32m\u{001b}[1m", .{});
+        }
         // printable ascii characters are all within 32 to 176. every other
         // character should be a "." as xxd does it
         if (raw_char >= 32 and raw_char <= 126) {
             try writer.print("{c}", .{raw_char});
         } else {
+            if (params.colorize) {
+                try writer.print("\u{001b}\u{001b}[33m\u{001b}[1m", .{});
+            }
             try writer.print(".", .{});
+        }
+        // turn off color
+        if (params.colorize) {
+            try writer.print("\u{001b}[0m", .{});
         }
     }
     return num_printed_bytes;
@@ -144,7 +173,8 @@ pub fn main() !void {
         \\-d                      Show offset in decimal and not hex
         \\-s, --seek <INT>        Start at <INT> bytes absolute
         \\-u                      Use upper-case hex letters, default is lower-case
-        \\ <FILENAME>
+        \\-R                      Boring output (no colors)
+        \\<FILENAME>
     );
 
     // custom parsing to enable the argument strings for the help text to be
@@ -218,6 +248,8 @@ pub fn main() !void {
     if (res.args.seek) |s| print_params.start_at = s;
 
     if (res.args.u != 0) print_params.upper_case = true;
+
+    if (res.args.R != 0) print_params.colorize = false;
 
     // the printed line length - useful for ensuring nice text alignment
     if (print_params.binary == false) {
