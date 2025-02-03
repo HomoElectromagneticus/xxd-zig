@@ -21,13 +21,10 @@ const printParams = struct {
 };
 
 fn colorize(writer: anytype, color: Color) !void {
-    if (color == Color.green) {
-        //                bold ----\ green ---\
-        try writer.print("\u{001b}[1m\u{001b}[32m", .{});
-    } else if (color == Color.yellow) {
-        //                bold ----\ yellow --\
-        try writer.print("\u{001b}[1m\u{001b}[33m", .{});
-    }
+    //                                         bold ----\ green ---\
+    if (color == Color.green) try writer.print("\u{001b}[1m\u{001b}[32m", .{});
+    //                                          bold ----\ yellow --\
+    if (color == Color.yellow) try writer.print("\u{001b}[1m\u{001b}[33m", .{});
 }
 
 fn uncolor(writer: anytype) !void {
