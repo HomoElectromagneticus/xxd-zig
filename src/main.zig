@@ -86,7 +86,10 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     }
     // add an extra space to copy xxd
     try writer.print(" ", .{});
-    // print the content of the line as ascii characters
+    return num_printed_bytes;
+}
+
+fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
     for (input) |raw_char| {
         // handle color
         if (params.colorize) try colorize(writer, Color.green);
@@ -100,7 +103,6 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
         }
         if (params.colorize) try uncolor(writer); //turn off color
     }
-    return num_printed_bytes;
 }
 
 fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
@@ -146,6 +148,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
             try writer.print("{x:0>8}: ", .{file_pos});
         }
         file_pos += try print_columns(writer, params, slice);
+        try print_ascii(writer, params, slice);
         try writer.print("\n", .{});
     }
 }
