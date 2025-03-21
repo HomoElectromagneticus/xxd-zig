@@ -206,13 +206,15 @@ pub fn main() !void {
     defer res.deinit();
 
     // if -h or --help is passed in, print usage text, help text, then quit
+    // TODO: Add support for multiple file input (maybe cat them together?)
     if (res.args.help != 0) {
         const usage_notes =
             \\Usage:
             \\    xxd-zig [options] [filename]
             \\
             \\    If --string is not set and a filename not given,
-            \\    the program will read from stdin.
+            \\    the program will read from stdin. If more than
+            \\    one filename is passed in, it will be ignored.
             \\
             \\Options:
         ;
@@ -276,8 +278,8 @@ pub fn main() !void {
         try print_output(stdout, print_params, s);
     } else if (res.positionals.len > 0) { //from an input file
         // interpret the filepath
-        var path_buffer: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        const path = try std.fs.realpath(res.positionals[0], &path_buffer);
+        var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        const path = try std.fs.realpath(res.positionals[0].?, &path_buffer);
 
         // load the file into memory in a single allocation
         const file_contents = try std.fs.cwd().readFileAlloc(
