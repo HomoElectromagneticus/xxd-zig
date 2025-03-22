@@ -20,6 +20,19 @@ const printParams = struct {
     colorize: bool = true,
 };
 
+// this will only work on linux or MacOS. for windows users, it will simply
+// always return 80
+fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
+    var winsize: std.posix.system.winsize = undefined;
+    const errno = std.posix.system.ioctl(terminal_handle, std.posix.T.IOCGWINSZ, @intFromPtr(&winsize));
+    if (std.posix.errno(errno) == .SUCCESS) {
+        return winsize.col;
+    } else {
+        return 80;
+    }
+}
+
+// colorize the terminal output
 fn colorize(writer: anytype, color: Color) !void {
     //                                         bold ----\ green ---\
     if (color == Color.green) try writer.print("\u{001b}[1m\u{001b}[32m", .{});
@@ -27,6 +40,7 @@ fn colorize(writer: anytype, color: Color) !void {
     if (color == Color.yellow) try writer.print("\u{001b}[1m\u{001b}[33m", .{});
 }
 
+// tell the terminal to go back to standard color
 fn uncolor(writer: anytype) !void {
     try writer.print("\u{001b}[0m", .{});
 }
@@ -89,6 +103,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     return num_printed_bytes;
 }
 
+// for the ascii output on the right-hand-side
 fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
     for (input) |raw_char| {
         // handle color
@@ -171,17 +186,17 @@ pub fn main() !void {
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit
         \\-b                      Binary digit dump, default is hex
-        \\-c, --columns <INT>     Write <INT> per line, default is 16
+        \\-c, --columns <INT>     Dump <INT> per line, default 16
         \\-g, --groupsize <INT>   Group the output in <INT> bytes, default 2
         \\    --string <STR>      Optional input string (ignores FILENAME)
         \\-l, --len <INT>         Stop writing after <INT> bytes 
         \\-o, --off <INT>         Add an offset to the displayed file position
         \\-p                      Plain dump, no formatting
-        \\-d                      Show offset in decimal and not hex
+        \\-d                      Show offset in decimal and not in hex
         \\-s, --seek <INT>        Start at <INT> bytes absolute
         \\-u                      Use upper-case hex letters, default is lower-case
         \\-R                      Disable color output
-        \\<FILENAME>
+        \\<FILENAME>              Path of file to convert to hex
     );
 
     // custom parsing to enable the argument strings for the help text to be
@@ -206,23 +221,24 @@ pub fn main() !void {
     defer res.deinit();
 
     // if -h or --help is passed in, print usage text, help text, then quit
-    // TODO: Add support for multiple file input (maybe cat them together?)
     if (res.args.help != 0) {
         const usage_notes =
+            \\xxd-zig creates a hex dump of a given file or standard input
             \\Usage:
-            \\    xxd-zig [options] [filename]
+            \\    xxd-zig <options> <filename>
             \\
             \\    If --string is not set and a filename not given,
-            \\    the program will read from stdin. If more than
-            \\    one filename is passed in, it will be ignored.
+            \\    the program will read from stdin. If more than one
+            \\    filename is passed in, only the first will be
+            \\    considered.
             \\
             \\Options:
         ;
         try stdout.print("{s}\n", .{usage_notes});
         try bw.flush();
         const help_options = clap.HelpOptions{
-            .spacing_between_parameters = 1,
-            .max_width = 72, //TODO: set to current terminal size
+            .description_indent = 4,
+            .max_width = get_terminal_width(std.io.getStdOut().handle),
         };
         return clap.help(
             std.io.getStdErr().writer(),
