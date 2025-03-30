@@ -18,13 +18,19 @@ const printParams = struct {
     upper_case: bool = false,
     line_length: usize = undefined,
     colorize: bool = true,
+    c_style: bool = false,
+    c_style_name: []const u8 = "",
 };
 
 // this will only work on linux or MacOS. for windows users, it will simply
 // always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
     var winsize: std.posix.system.winsize = undefined;
-    const errno = std.posix.system.ioctl(terminal_handle, std.posix.T.IOCGWINSZ, @intFromPtr(&winsize));
+    const errno = std.posix.system.ioctl(
+        terminal_handle,
+        std.posix.T.IOCGWINSZ,
+        @intFromPtr(&winsize),
+    );
     if (std.posix.errno(errno) == .SUCCESS) {
         return winsize.col;
     } else {
@@ -120,6 +126,41 @@ fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
     }
 }
 
+fn print_plain_dump(writer: anytype, params: printParams, input: []const u8) !void {
+    for (input) |character| {
+        if (params.binary) {
+            try writer.print("{b:0>8}", .{character});
+        } else {
+            if (params.upper_case) {
+                try writer.print("{X:0>2}", .{character});
+            } else {
+                try writer.print("{x:0>2}", .{character});
+            }
+        }
+    }
+    try writer.print("\n", .{});
+}
+
+fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !void {
+    try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+    for (input, 0..) |character, index| {
+        // handle linebreaks and the indenting to look like xxd
+        if (index % (params.num_columns) == 0 and index != 0) {
+            try writer.print("\n  ", .{});
+        }
+        if (params.binary) {
+            try writer.print("0b{b:0>8}, ", .{character});
+        } else {
+            if (params.upper_case) {
+                try writer.print("0x{X:0>2}, ", .{character});
+            } else {
+                try writer.print("0x{x:0>2}, ", .{character});
+            }
+        }
+    }
+    try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+}
+
 fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     // define how much of the input to print
     var length = input.len;
@@ -130,18 +171,21 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
 
     // if the user asked for plain dump, just dump everything no formatting
     if (params.postscript) {
-        for (input[params.start_at..length]) |character| {
-            if (params.binary) {
-                try writer.print("{b:0>8}", .{character});
-            } else {
-                if (params.upper_case) {
-                    try writer.print("{X:0>2}", .{character});
-                } else {
-                    try writer.print("{x:0>2}", .{character});
-                }
-            }
-        }
-        try writer.print("\n", .{});
+        try print_plain_dump(
+            writer,
+            params,
+            input[params.start_at..length],
+        );
+        return;
+    }
+
+    // if the user asked for a c import style ouput, use that function
+    if (params.c_style) {
+        try print_c_inc_style(
+            writer,
+            params,
+            input[params.start_at..length],
+        );
         return;
     }
 
@@ -183,12 +227,15 @@ pub fn main() !void {
     defer _ = gpa.deinit();
 
     // specify what parameters our program can take via clap
+    // TODO: gracefully handle errors
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit
         \\-b                      Binary digit dump, default is hex
         \\-c, --columns <INT>     Dump <INT> per line, default 16
         \\-g, --groupsize <INT>   Group the output in <INT> bytes, default 2
         \\    --string <STR>      Optional input string (ignores FILENAME)
+        \\-i                      Output in C include file style
+        \\-n <STR>                Set the variable name for C include output (-i) 
         \\-l, --len <INT>         Stop writing after <INT> bytes 
         \\-o, --off <INT>         Add an offset to the displayed file position
         \\-p                      Plain dump, no formatting
@@ -258,6 +305,15 @@ pub fn main() !void {
         print_params.num_columns = 6;
     }
 
+    // setting to c import style output also changes other parameters to
+    // reasonable values (this can be overridden)
+    if (res.args.i != 0) {
+        print_params.c_style = true;
+        print_params.num_columns = 12;
+    }
+
+    if (res.args.n) |n| print_params.c_style_name = n;
+
     if (res.args.columns) |c| print_params.num_columns = c;
 
     if (res.args.groupsize) |g| print_params.group_size = g;
@@ -291,11 +347,19 @@ pub fn main() !void {
 
     // choose how to print the output based on where the input comes from
     if (res.args.string) |s| { //from an input string
+        // just use "string" for the c import style name in this input case if
+        // the name is not set via the "-n" option
+        if (print_params.c_style_name.len == 0) print_params.c_style_name = "string";
+
         try print_output(stdout, print_params, s);
-    } else if (res.positionals.len > 0) { //from an input file
+    } else if (res.positionals[0]) |positional| { //from an input file
         // interpret the filepath
         var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-        const path = try std.fs.realpath(res.positionals[0].?, &path_buffer);
+        const path = try std.fs.realpath(positional, &path_buffer);
+
+        // define the c sytle import name from the file path if it's not set by
+        // the user via the "-n" option
+        if (print_params.c_style_name.len == 0) print_params.c_style_name = positional;
 
         // load the file into memory in a single allocation
         const file_contents = try std.fs.cwd().readFileAlloc(
@@ -311,6 +375,10 @@ pub fn main() !void {
         // coming from stdin at compile time
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
+
+        // just use "stdin" for the c import style name in this input case (if
+        // it's not set by the user via the "-n" option)
+        if (print_params.c_style_name.len == 0) print_params.c_style_name = "stdin";
 
         try print_output(stdout, print_params, stdin_contents);
     }
