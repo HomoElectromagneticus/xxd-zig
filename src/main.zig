@@ -226,22 +226,34 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
+    // usage notes that will get print with the help text
+    const usage_notes =
+        \\xxd-zig creates a hex dump of a given file or standard input
+        \\Usage:
+        \\    xxd-zig <options> <filename>
+        \\
+        \\    If --string is not set and a filename not given, the
+        \\    program will read from stdin. If more than one filename
+        \\    is passed in, only the first will be considered.
+        \\
+        \\Options:
+    ;
+
     // specify what parameters our program can take via clap
-    // TODO: gracefully handle errors
     const params = comptime clap.parseParamsComptime(
         \\-h, --help              Display this help and exit
-        \\-b                      Binary digit dump, default is hex
+        \\-b, --binary            Binary digit dump, default is hex
         \\-c, --columns <INT>     Dump <INT> per line, default 16
-        \\-g, --groupsize <INT>   Group the output in <INT> bytes, default 2
+        \\-g <INT>                Group the output in <INT> bytes, default 2
         \\    --string <STR>      Optional input string (ignores FILENAME)
         \\-i                      Output in C include file style
         \\-n <STR>                Set the variable name for C include output (-i) 
         \\-l, --len <INT>         Stop writing after <INT> bytes 
-        \\-o, --off <INT>         Add an offset to the displayed file position
+        \\-o, --offset <INT>      Add an offset to the displayed file position
         \\-p                      Plain dump, no formatting
         \\-d                      Show offset in decimal and not in hex
         \\-s, --seek <INT>        Start at <INT> bytes absolute
-        \\-u                      Use upper-case hex letters, default is lower-case
+        \\-u                      Use upper-case hex letters, default is lower
         \\-R                      Disable color output
         \\<FILENAME>              Path of file to convert to hex
     );
@@ -261,31 +273,28 @@ pub fn main() !void {
         .diagnostic = &diag,
         .allocator = gpa.allocator(),
     }) catch |err| {
-        // Report useful error and exit.
-        diag.report(std.io.getStdErr().writer(), err) catch {};
-        return err;
+        // if the user entered a strange option
+        if (err == error.InvalidArgument) {
+            try stdout.print("Invalid argument! Try passing in '-h'.\n", .{});
+            try bw.flush();
+            return;
+            // report useful error and exit
+        } else {
+            diag.report(std.io.getStdErr().writer(), err) catch {};
+            return err;
+        }
     };
     defer res.deinit();
 
     // if -h or --help is passed in, print usage text, help text, then quit
     if (res.args.help != 0) {
-        const usage_notes =
-            \\xxd-zig creates a hex dump of a given file or standard input
-            \\Usage:
-            \\    xxd-zig <options> <filename>
-            \\
-            \\    If --string is not set and a filename not given,
-            \\    the program will read from stdin. If more than one
-            \\    filename is passed in, only the first will be
-            \\    considered.
-            \\
-            \\Options:
-        ;
         try stdout.print("{s}\n", .{usage_notes});
         try bw.flush();
         const help_options = clap.HelpOptions{
-            .description_indent = 4,
+            .description_on_new_line = false,
+            .description_indent = 0,
             .max_width = get_terminal_width(std.io.getStdOut().handle),
+            .spacing_between_parameters = 0,
         };
         return clap.help(
             std.io.getStdErr().writer(),
@@ -299,7 +308,7 @@ pub fn main() !void {
 
     // setting to binary output also changes other parameters to reasonable
     // values (this can be overridden)
-    if (res.args.b != 0) {
+    if (res.args.binary != 0) {
         print_params.binary = true;
         print_params.group_size = 1;
         print_params.num_columns = 6;
@@ -316,11 +325,11 @@ pub fn main() !void {
 
     if (res.args.columns) |c| print_params.num_columns = c;
 
-    if (res.args.groupsize) |g| print_params.group_size = g;
+    if (res.args.g) |g| print_params.group_size = g;
 
     if (res.args.len) |l| print_params.stop_after = l;
 
-    if (res.args.off) |o| print_params.position_offset = o;
+    if (res.args.offset) |o| print_params.position_offset = o;
 
     if (res.args.p != 0) print_params.postscript = true;
 
