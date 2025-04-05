@@ -9,6 +9,7 @@ const Color = enum {
 const printParams = struct {
     binary: bool = false,
     num_columns: usize = 16,
+    little_endian: bool = false,
     group_size: usize = 2,
     stop_after: usize = undefined,
     position_offset: usize = 0,
@@ -52,53 +53,72 @@ fn uncolor(writer: anytype) !void {
 }
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
-    // amount of bytes converted into hex
-    var num_printed_bytes: usize = 0;
     // number of printed characters of translated input (not including the
     // index markers on the left!)
     var num_printed_chars: usize = 0;
     // number of spaces for lining up the ascii characters in the final row
     var num_spaces: usize = 0;
 
-    for (input, 0..) |character, index| {
-        if (params.binary) {
-            // no color for binary ouput - this is what xxd does as well
-            try writer.print("{b:0>8}", .{character});
-            num_printed_chars += 8;
-        } else {
-            // handle colors. if the character is not a printable ascii char,
-            // it should be printed in yellow. otherwise green
-            if ((character < 32 or character > 126) and params.colorize) {
-                try colorize(writer, Color.yellow);
-            } else if (params.colorize) {
-                try colorize(writer, Color.green);
+    // split the input into groups, where the size is determined by the print
+    // parameters
+    var groups_iterator = std.mem.window(
+        u8,
+        input,
+        params.group_size,
+        params.group_size,
+    );
+
+    while (groups_iterator.next()) |group| {
+        // in case the last group during a little-endian dump is not full, add
+        // extra spaces
+        if ((params.little_endian) and (group.len < params.group_size)) {
+            const delta: usize = 2 * (params.group_size - group.len);
+            for (0..delta) |_| {
+                try writer.print(" ", .{});
+                num_printed_chars += 1;
             }
-            // print the hex value of the current character
-            if (params.upper_case) {
-                try writer.print("{X:0>2}", .{character});
+        }
+        for (0..group.len) |idx| {
+            var i: usize = idx;
+            // if we are doing a little-endian dump, we need to print the
+            // values in the group backwards
+            if (params.little_endian) i = group.len - (idx + 1);
+
+            if (params.binary) {
+                // no color for binary ouput - this is what xxd does as well
+                try writer.print("{b:0>8}", .{group[i]});
+                num_printed_chars += 8;
             } else {
-                try writer.print("{x:0>2}", .{character});
+                // handle colors. if the character is not a printable ascii
+                // char, it should be printed in yellow. otherwise green
+                if ((group[i] < 32 or group[i] > 126) and params.colorize) {
+                    try colorize(writer, Color.yellow);
+                } else if (params.colorize) {
+                    try colorize(writer, Color.green);
+                }
+                // print the hex value of the current character
+                if (params.upper_case) {
+                    try writer.print("{X:0>2}", .{group[i]});
+                } else {
+                    try writer.print("{x:0>2}", .{group[i]});
+                }
+                if (params.colorize) try uncolor(writer); // reset color
+                num_printed_chars += 2;
             }
-            num_printed_chars += 2;
-            if (params.colorize) try uncolor(writer); // reset color
         }
-        num_printed_bytes += 1;
-        // if we are at the end of the input, print a space and break
-        if (index == input.len - 1) {
-            try writer.print(" ", .{});
-            num_printed_chars += 1;
-            break;
-        }
-        // if we are at the end of a group, add a space
-        if ((index + 1) % params.group_size == 0) {
-            try writer.print(" ", .{});
-            num_printed_chars += 1;
-        }
+        // at the end of a group, add a space
+        try writer.print(" ", .{});
+        num_printed_chars += 1;
     }
+
     // if it's the last part of the input, we need to line up the ascii text
     // with the previous columns
-    if (num_printed_bytes != params.num_columns) {
-        num_spaces += params.line_length - num_printed_chars;
+    if (input.len < params.num_columns) {
+        num_spaces += params.line_length -| num_printed_chars;
+
+        // when the number of columns is not evenly divisible by the group
+        // size, we need an extra space or the ASCII won't line up right
+        if (params.num_columns % params.group_size != 0) num_spaces += 1;
 
         for (0..num_spaces) |_| {
             try writer.print(" ", .{});
@@ -106,7 +126,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     }
     // add an extra space to copy xxd
     try writer.print(" ", .{});
-    return num_printed_bytes;
+    return input.len;
 }
 
 // for the ascii output on the right-hand-side
@@ -244,6 +264,7 @@ pub fn main() !void {
         \\-h, --help              Display this help and exit
         \\-b, --binary            Binary digit dump, default is hex
         \\-c, --columns <INT>     Dump <INT> per line, default 16
+        \\-e                      Little-endian dump (default big-endian)
         \\-g <INT>                Group the output in <INT> bytes, default 2
         \\    --string <STR>      Optional input string (ignores FILENAME)
         \\-i                      Output in C include file style
@@ -339,7 +360,10 @@ pub fn main() !void {
 
     if (res.args.u != 0) print_params.upper_case = true;
 
+    // TODO: disable color if the stdout is not pointing to a terminal
     if (res.args.R != 0) print_params.colorize = false;
+
+    if (res.args.e != 0) print_params.little_endian = true;
 
     // the printed line length - useful for ensuring nice text alignment
     if (print_params.binary == false) {
