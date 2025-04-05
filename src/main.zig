@@ -234,8 +234,8 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
 
 pub fn main() !void {
     // stdout is for the actual output of the application
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
+    const stdout_file = std.io.getStdOut();
+    var bw = std.io.bufferedWriter(stdout_file.writer());
     const stdout = bw.writer();
 
     // stdin is for the actual input of the appplication
@@ -360,8 +360,9 @@ pub fn main() !void {
 
     if (res.args.u != 0) print_params.upper_case = true;
 
-    // TODO: disable color if the stdout is not pointing to a terminal
-    if (res.args.R != 0) print_params.colorize = false;
+    if ((res.args.R != 0) or !(std.fs.File.isTty(stdout_file))) {
+        print_params.colorize = false;
+    }
 
     if (res.args.e != 0) print_params.little_endian = true;
 
