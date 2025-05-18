@@ -389,7 +389,17 @@ pub fn main() !void {
     } else if (res.positionals[0]) |positional| { //from an input file
         // interpret the filepath
         var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-        const path = try std.fs.realpath(positional, &path_buffer);
+        const path: []u8 = std.fs.realpath(
+            positional,
+            &path_buffer,
+        ) catch |err| switch (err) {
+            error.FileNotFound => {
+                try stdout.print("Error: File \'{s}\' not found!\n", .{positional});
+                try bw.flush();
+                return;
+            },
+            else => |other_err| return other_err,
+        };
 
         // define the c sytle import name from the file path if it's not set by
         // the user via the "-n" option
