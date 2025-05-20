@@ -406,6 +406,7 @@ pub fn main() !void {
         if (print_params.c_style_name.len == 0) print_params.c_style_name = positional;
 
         // load the file into memory in a single allocation
+        // TODO: Could this be made faster via buffering?
         const file_contents = try std.fs.cwd().readFileAlloc(
             gpa.allocator(),
             path,
@@ -417,6 +418,7 @@ pub fn main() !void {
     } else { //from stdin
         // we'll need to allocate memory since we don't know the size of what's
         // coming from stdin at compile time
+        // TODO: Use a buffered reader to read faster from stdin
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
 
