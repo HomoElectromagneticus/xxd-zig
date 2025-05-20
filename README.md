@@ -1,6 +1,17 @@
 # xxd-zig
+
+## à propos
+
 This project attempts to clone the behavior of the `xxd` command-line utility in the [Zig programming language](https://ziglang.org). The goal of the project is for the author to learn something about the Zig language.
 
-This project uses [the CLAP library](https://github.com/Hejsil/zig-clap) for command-line argument parsing.
+This project uses [the CLAP library v0.10.0](https://github.com/Hejsil/zig-clap/releases/tag/0.10.0) for command-line argument parsing.
 
 The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/master/src/xxd](https://github.com/vim/vim/tree/master/src/xxd).
+
+## TODO
+
+ - replicate the `-a` or "autoskip" option in the original `xxd`
+ - allow for capitalising the variable names in the C include style
+ - allow reversing hex dumps back into "normal" files
+ - see if we can't make the binary dump format faster by not using zig's print
+   formating code and instead rolling our own
