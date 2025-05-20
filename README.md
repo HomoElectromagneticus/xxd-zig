@@ -15,3 +15,7 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
  - allow reversing hex dumps back into "normal" files
  - see if we can't make the binary dump format faster by not using zig's print
    formating code and instead rolling our own
+ - write more tests
+ - look into using a different memory allocator
+ - test for memory leaks
+ - improve error handling for the command-line arguments
