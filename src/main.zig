@@ -69,9 +69,9 @@ fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
 
 // colorize the terminal output
 fn colorize(writer: anytype, color: Color) !void {
-    //                                               bold ---\ green ---\
+    //                                              bold ---\   green --\
     if (color == Color.green) try writer.writeAll("\u{001b}[1m\u{001b}[32m");
-    //                                               bold ----\ yellow --\
+    //                                              bold ----\  yellow --\
     if (color == Color.yellow) try writer.writeAll("\u{001b}[1m\u{001b}[33m");
 }
 
@@ -126,10 +126,8 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
                     try colorize(writer, Color.green);
                 }
                 // print the hex value of the current character (no need for
-                // print's formatting, we can simply write directly to stdout)
-                // or the file). note that writer returns the number of bytes
-                // written, which in this case corresponds to the number of
-                // characters printed
+                // print's formatting, we can simply write directly to stdout
+                // or the file)
                 num_printed_chars += try writer.write(&bytes_to_hex_string(group[i], params));
                 if (params.colorize) try uncolor(writer); // reset color
             }
@@ -185,7 +183,11 @@ fn print_plain_dump(writer: anytype, params: printParams, input: []const u8) !vo
 }
 
 fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !void {
-    try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+    if (params.c_style_name.len != 0) {
+        try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+    } else {
+        try writer.writeAll("  ");
+    }
     for (input, 0..) |character, index| {
         // handle linebreaks and the indenting to look like xxd
         if (index % (params.num_columns) == 0 and index != 0) {
@@ -194,15 +196,16 @@ fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !v
         if (params.binary) {
             try writer.print("0b{b:0>8}, ", .{character});
         } else {
-            // TODO: make the c-include style thing work with the hex LUT stuff
-            if (params.upper_case) {
-                try writer.print("0x{X:0>2}, ", .{character});
-            } else {
-                try writer.print("0x{x:0>2}, ", .{character});
-            }
+            try writer.writeAll("0x");
+            try writer.writeAll(&bytes_to_hex_string(character, params));
+            if (index != (input.len - 1)) try writer.writeAll(", ");
         }
     }
-    try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+    if (params.c_style_name.len != 0) {
+        try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+    } else {
+        try writer.writeAll("\n");
+    }
 }
 
 fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
@@ -446,10 +449,6 @@ pub fn main() !void {
         // coming from stdin at compile time
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
-
-        // just use "stdin" for the c import style name in this input case (if
-        // it's not set by the user via the "-n" option)
-        if (print_params.c_style_name.len == 0) print_params.c_style_name = "stdin";
 
         try print_output(stdout, print_params, stdin_contents);
     }
