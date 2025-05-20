@@ -23,6 +23,34 @@ const printParams = struct {
     c_style_name: []const u8 = "",
 };
 
+const hexCharsetUpperCase: *const [16:0]u8 = "0123456789ABCDEF";
+const hexCharsetLowerCase: *const [16:0]u8 = "0123456789abcdef";
+
+// use a look-up-table to convert the input data into hex (is much faster than
+// the zig standard library's format function)
+fn bytes_to_hex_string(input: u8, params: printParams) [2]u8 {
+    var output_string: [2]u8 = undefined;
+    // pick the LUT depending on the user's choice for upper or lower case
+    if (params.upper_case) {
+        output_string[0] = hexCharsetUpperCase[@as(usize, input >> 4) & 0x0F];
+        output_string[1] = hexCharsetUpperCase[@as(usize, input) & 0x0F];
+    } else {
+        output_string[0] = hexCharsetLowerCase[@as(usize, input >> 4) & 0x0F];
+        output_string[1] = hexCharsetLowerCase[@as(usize, input) & 0x0F];
+    }
+    return output_string;
+}
+
+test "confirm upper case hex convertion works" {
+    const test_char = 'L';
+    try std.testing.expect(std.mem.eql(u8, &bytes_to_hex_string(test_char, .{ .upper_case = true }), "4C"));
+}
+
+test "confirm lower case hex convertion works" {
+    const test_char = 'm';
+    try std.testing.expect(std.mem.eql(u8, &bytes_to_hex_string(test_char, .{ .upper_case = false }), "6d"));
+}
+
 // this will only work on linux or MacOS. for windows users, it will simply
 // always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
@@ -41,15 +69,15 @@ fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
 
 // colorize the terminal output
 fn colorize(writer: anytype, color: Color) !void {
-    //                                         bold ----\ green ---\
-    if (color == Color.green) try writer.print("\u{001b}[1m\u{001b}[32m", .{});
-    //                                          bold ----\ yellow --\
-    if (color == Color.yellow) try writer.print("\u{001b}[1m\u{001b}[33m", .{});
+    //                                              bold ---\   green --\
+    if (color == Color.green) try writer.writeAll("\u{001b}[1m\u{001b}[32m");
+    //                                              bold ----\  yellow --\
+    if (color == Color.yellow) try writer.writeAll("\u{001b}[1m\u{001b}[33m");
 }
 
 // tell the terminal to go back to standard color
 fn uncolor(writer: anytype) !void {
-    try writer.print("\u{001b}[0m", .{});
+    try writer.writeAll("\u{001b}[0m");
 }
 
 fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
@@ -74,8 +102,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
         if ((params.little_endian) and (group.len < params.group_size)) {
             const delta: usize = 2 * (params.group_size - group.len);
             for (0..delta) |_| {
-                try writer.print(" ", .{});
-                num_printed_chars += 1;
+                num_printed_chars += try writer.write(" ");
             }
         }
         for (0..group.len) |idx| {
@@ -86,6 +113,8 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
 
             if (params.binary) {
                 // no color for binary ouput - this is what xxd does as well
+                // TODO: how does the binary output compare in terms of speed
+                //       to the original xxd?
                 try writer.print("{b:0>8}", .{group[i]});
                 num_printed_chars += 8;
             } else {
@@ -96,19 +125,15 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
                 } else if (params.colorize) {
                     try colorize(writer, Color.green);
                 }
-                // print the hex value of the current character
-                if (params.upper_case) {
-                    try writer.print("{X:0>2}", .{group[i]});
-                } else {
-                    try writer.print("{x:0>2}", .{group[i]});
-                }
+                // print the hex value of the current character (no need for
+                // print's formatting, we can simply write directly to stdout
+                // or the file)
+                num_printed_chars += try writer.write(&bytes_to_hex_string(group[i], params));
                 if (params.colorize) try uncolor(writer); // reset color
-                num_printed_chars += 2;
             }
         }
         // at the end of a group, add a space
-        try writer.print(" ", .{});
-        num_printed_chars += 1;
+        num_printed_chars += try writer.write(" ");
     }
 
     // if it's the last part of the input, we need to line up the ascii text
@@ -121,11 +146,11 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
         if (params.num_columns % params.group_size != 0) num_spaces += 1;
 
         for (0..num_spaces) |_| {
-            try writer.print(" ", .{});
+            try writer.writeAll(" ");
         }
     }
     // add an extra space to copy xxd
-    try writer.print(" ", .{});
+    try writer.writeAll(" ");
     return input.len;
 }
 
@@ -140,7 +165,7 @@ fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
             try writer.print("{c}", .{raw_char});
         } else {
             if (params.colorize) try colorize(writer, Color.yellow);
-            try writer.print(".", .{});
+            try writer.writeAll(".");
         }
         if (params.colorize) try uncolor(writer); //turn off color
     }
@@ -151,34 +176,36 @@ fn print_plain_dump(writer: anytype, params: printParams, input: []const u8) !vo
         if (params.binary) {
             try writer.print("{b:0>8}", .{character});
         } else {
-            if (params.upper_case) {
-                try writer.print("{X:0>2}", .{character});
-            } else {
-                try writer.print("{x:0>2}", .{character});
-            }
+            try writer.writeAll(&bytes_to_hex_string(character, params));
         }
     }
-    try writer.print("\n", .{});
+    try writer.writeAll("\n");
 }
 
 fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !void {
-    try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+    if (params.c_style_name.len != 0) {
+        try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+    } else {
+        try writer.writeAll("  ");
+    }
     for (input, 0..) |character, index| {
         // handle linebreaks and the indenting to look like xxd
         if (index % (params.num_columns) == 0 and index != 0) {
-            try writer.print("\n  ", .{});
+            try writer.writeAll("\n  ");
         }
         if (params.binary) {
             try writer.print("0b{b:0>8}, ", .{character});
         } else {
-            if (params.upper_case) {
-                try writer.print("0x{X:0>2}, ", .{character});
-            } else {
-                try writer.print("0x{x:0>2}, ", .{character});
-            }
+            try writer.writeAll("0x");
+            try writer.writeAll(&bytes_to_hex_string(character, params));
+            if (index != (input.len - 1)) try writer.writeAll(", ");
         }
     }
-    try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+    if (params.c_style_name.len != 0) {
+        try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+    } else {
+        try writer.writeAll("\n");
+    }
 }
 
 fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
@@ -228,7 +255,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
         }
         file_pos += try print_columns(writer, params, slice);
         try print_ascii(writer, params, slice);
-        try writer.print("\n", .{});
+        try writer.writeAll("\n");
     }
 }
 
@@ -238,11 +265,9 @@ pub fn main() !void {
     var bw = std.io.bufferedWriter(stdout_file.writer());
     const stdout = bw.writer();
 
-    // stdin is for the actual input of the appplication
-    const stdin = std.io.getStdIn().reader();
-
     // need to allocate memory in order to parse the command-line args, handle
     // buffers, etc
+    // TODO: think about using a different allocator here
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
@@ -296,7 +321,7 @@ pub fn main() !void {
     }) catch |err| {
         // if the user entered a strange option
         if (err == error.InvalidArgument) {
-            try stdout.print("Invalid argument! Try passing in '-h'.\n", .{});
+            try stdout.writeAll("Invalid argument! Try passing in '-h'.\n");
             try bw.flush();
             return;
             // report useful error and exit
@@ -416,15 +441,16 @@ pub fn main() !void {
 
         try print_output(stdout, print_params, file_contents);
     } else { //from stdin
+        // get a buffered reader
+        const stdin_file = std.io.getStdIn();
+        var br = std.io.bufferedReader(stdin_file.reader());
+        const stdin = br.reader();
+
         // we'll need to allocate memory since we don't know the size of what's
         // coming from stdin at compile time
         // TODO: Use a buffered reader to read faster from stdin
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
-
-        // just use "stdin" for the c import style name in this input case (if
-        // it's not set by the user via the "-n" option)
-        if (print_params.c_style_name.len == 0) print_params.c_style_name = "stdin";
 
         try print_output(stdout, print_params, stdin_contents);
     }
