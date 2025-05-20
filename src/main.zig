@@ -23,14 +23,15 @@ const printParams = struct {
     c_style_name: []const u8 = "",
 };
 
+// look-up-tables for byte-to-hex conversion
 const hexCharsetUpperCase: *const [16:0]u8 = "0123456789ABCDEF";
 const hexCharsetLowerCase: *const [16:0]u8 = "0123456789abcdef";
 
 // use a look-up-table to convert the input data into hex (is much faster than
 // the zig standard library's format function)
-fn bytes_to_hex_string(input: u8, params: printParams) [2]u8 {
+fn byte_to_hex_string(input: u8, params: printParams) [2]u8 {
     var output_string: [2]u8 = undefined;
-    // pick the LUT depending on the user's choice for upper or lower case
+    // pick the LUT depending on the user's choice of upper or lower case
     if (params.upper_case) {
         output_string[0] = hexCharsetUpperCase[@as(usize, input >> 4) & 0x0F];
         output_string[1] = hexCharsetUpperCase[@as(usize, input) & 0x0F];
@@ -43,12 +44,12 @@ fn bytes_to_hex_string(input: u8, params: printParams) [2]u8 {
 
 test "confirm upper case hex convertion works" {
     const test_char = 'L';
-    try std.testing.expect(std.mem.eql(u8, &bytes_to_hex_string(test_char, .{ .upper_case = true }), "4C"));
+    try std.testing.expect(std.mem.eql(u8, &byte_to_hex_string(test_char, .{ .upper_case = true }), "4C"));
 }
 
 test "confirm lower case hex convertion works" {
     const test_char = 'm';
-    try std.testing.expect(std.mem.eql(u8, &bytes_to_hex_string(test_char, .{ .upper_case = false }), "6d"));
+    try std.testing.expect(std.mem.eql(u8, &byte_to_hex_string(test_char, .{ .upper_case = false }), "6d"));
 }
 
 // this will only work on linux or MacOS. for windows users, it will simply
@@ -128,7 +129,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
                 // print the hex value of the current character (no need for
                 // print's formatting, we can simply write directly to stdout
                 // or the file)
-                num_printed_chars += try writer.write(&bytes_to_hex_string(group[i], params));
+                num_printed_chars += try writer.write(&byte_to_hex_string(group[i], params));
                 if (params.colorize) try uncolor(writer); // reset color
             }
         }
@@ -176,7 +177,7 @@ fn print_plain_dump(writer: anytype, params: printParams, input: []const u8) !vo
         if (params.binary) {
             try writer.print("{b:0>8}", .{character});
         } else {
-            try writer.writeAll(&bytes_to_hex_string(character, params));
+            try writer.writeAll(&byte_to_hex_string(character, params));
         }
     }
     try writer.writeAll("\n");
@@ -197,7 +198,7 @@ fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !v
             try writer.print("0b{b:0>8}, ", .{character});
         } else {
             try writer.writeAll("0x");
-            try writer.writeAll(&bytes_to_hex_string(character, params));
+            try writer.writeAll(&byte_to_hex_string(character, params));
             if (index != (input.len - 1)) try writer.writeAll(", ");
         }
     }
