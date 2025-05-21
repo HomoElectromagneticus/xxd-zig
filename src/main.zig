@@ -4,6 +4,7 @@ const clap = @import("clap");
 const Color = enum {
     green,
     yellow,
+    white,
 };
 
 const printParams = struct {
@@ -74,6 +75,8 @@ fn colorize(writer: anytype, color: Color) !void {
     if (color == Color.green) try writer.writeAll("\u{001b}[1m\u{001b}[32m");
     //                                              bold ----\  yellow --\
     if (color == Color.yellow) try writer.writeAll("\u{001b}[1m\u{001b}[33m");
+    //                                              bold ----\  white --\
+    if (color == Color.white) try writer.writeAll("\u{001b}[1m\u{001b}[37m");
 }
 
 // tell the terminal to go back to standard color
@@ -119,9 +122,13 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
                 try writer.print("{b:0>8}", .{group[i]});
                 num_printed_chars += 8;
             } else {
-                // handle colors. if the character is not a printable ascii
-                // char, it should be printed in yellow. otherwise green
-                if ((group[i] < 32 or group[i] > 126) and params.colorize) {
+                // handle colors
+                // null bytes should be white
+                if (group[i] == 0) {
+                    try colorize(writer, Color.white);
+                }
+                // non-printable ASCII should be yellow, all ohers green
+                else if ((group[i] < 32 or group[i] > 126) and params.colorize) {
                     try colorize(writer, Color.yellow);
                 } else if (params.colorize) {
                     try colorize(writer, Color.green);
@@ -155,6 +162,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
     return input.len;
 }
 
+// TODO: clean up the logic in this function, it's ugly
 // for the ascii output on the right-hand-side
 fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
     for (input) |raw_char| {
@@ -165,7 +173,11 @@ fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
         if (raw_char >= 32 and raw_char <= 126) {
             try writer.print("{c}", .{raw_char});
         } else {
-            if (params.colorize) try colorize(writer, Color.yellow);
+            if (params.colorize and raw_char == 0) {
+                try colorize(writer, Color.white);
+            } else if (params.colorize) {
+                try colorize(writer, Color.yellow);
+            }
             try writer.writeAll(".");
         }
         if (params.colorize) try uncolor(writer); //turn off color
