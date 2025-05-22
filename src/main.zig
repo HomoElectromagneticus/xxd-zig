@@ -462,7 +462,6 @@ pub fn main() !void {
         };
 
         // load the file into memory in a single allocation
-        // TODO: Could this be made faster via buffering?
         const file_contents = try std.fs.cwd().readFileAlloc(
             gpa.allocator(),
             path,
