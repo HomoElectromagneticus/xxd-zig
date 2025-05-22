@@ -461,10 +461,6 @@ pub fn main() !void {
             else => |other_err| return other_err,
         };
 
-        // define the c sytle import name from the file path if it's not set by
-        // the user via the "-n" option
-        if (print_params.c_style_name.len == 0) print_params.c_style_name = positional;
-
         // load the file into memory in a single allocation
         // TODO: Could this be made faster via buffering?
         const file_contents = try std.fs.cwd().readFileAlloc(
