@@ -54,24 +54,6 @@ test "confirm lower case hex convertion works" {
     try std.testing.expect(std.mem.eql(u8, &byte_to_hex_string(test_char, .{ .upper_case = false }), "6d"));
 }
 
-// returns true if a slice contains all zeros
-fn is_slice_all_zeros(input: []const u8) bool {
-    for (input) |item| {
-        if (item != 0) return false;
-    }
-    return true;
-}
-
-test "check if 'all zeros' function detects slices of zero" {
-    const empty = &[4:0]u8{ 0, 0, 0, 0 };
-    try std.testing.expect(is_slice_all_zeros(empty));
-}
-
-test "check if 'all zeros' function detects non-zero slices" {
-    const empty = "hello";
-    try std.testing.expect(!is_slice_all_zeros(empty));
-}
-
 // this will only work on linux or MacOS. for windows users, it will simply
 // always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
@@ -284,7 +266,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     // loop through the buffer and print the output in chunks of the columns
     while (input_iterator.next()) |slice| {
         // if the segment is all zeros, count it. otherwise reset the count
-        if (is_slice_all_zeros(slice)) {
+        if (std.mem.allEqual(u8, slice, 0)) {
             num_zero_lines +|= 1;
         } else {
             num_zero_lines = 0;
@@ -463,10 +445,6 @@ pub fn main() !void {
 
     // choose how to print the output based on where the input comes from
     if (res.args.string) |s| { //from an input string
-        // just use "string" for the c import style name in this input case if
-        // the name is not set via the "-n" option
-        if (print_params.c_style_name.len == 0) print_params.c_style_name = "string";
-
         try print_output(stdout, print_params, s);
     } else if (res.positionals[0]) |positional| { //from an input file
         // interpret the filepath
@@ -505,7 +483,6 @@ pub fn main() !void {
 
         // we'll need to allocate memory since we don't know the size of what's
         // coming from stdin at compile time
-        // TODO: Use a buffered reader to read faster from stdin
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
 
