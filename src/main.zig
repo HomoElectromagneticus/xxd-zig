@@ -271,7 +271,6 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
     // we'll use this variable to count the number of null lines in the output
     // for the autoskip option
     var num_zero_lines: usize = 0;
-    var skipping: bool = false;
 
     // split the buffer into segments based on the number of columns / bytes
     // specified via the command line arguments (default 16)
@@ -289,19 +288,19 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
             num_zero_lines +|= 1;
         } else {
             num_zero_lines = 0;
-            skipping = false;
         }
 
         // if the user has selected autoskip mode and the number of all-null
         // segments is two or more, skip the segment
         if (params.autoskip and num_zero_lines == 2) {
-            if (!skipping) {
-                try writer.writeAll("*\n");
-                skipping = true;
-            }
+            try writer.writeAll("*\n");
+            file_pos += slice.len;
+            continue;
+        } else if (params.autoskip and num_zero_lines > 2) {
             file_pos += slice.len;
             continue;
         }
+
         // print the file position in hex (default) or decimal
         if (params.decimal) {
             try writer.print("{d:0>8}: ", .{file_pos});
