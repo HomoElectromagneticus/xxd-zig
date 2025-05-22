@@ -8,6 +8,7 @@ const Color = enum {
 };
 
 const printParams = struct {
+    autoskip: bool = false,
     binary: bool = false,
     num_columns: usize = 16,
     little_endian: bool = false,
@@ -51,6 +52,24 @@ test "confirm upper case hex convertion works" {
 test "confirm lower case hex convertion works" {
     const test_char = 'm';
     try std.testing.expect(std.mem.eql(u8, &byte_to_hex_string(test_char, .{ .upper_case = false }), "6d"));
+}
+
+// returns true if a slice contains all zeros
+fn is_slice_all_zeros(input: []const u8) bool {
+    for (input) |item| {
+        if (item != 0) return false;
+    }
+    return true;
+}
+
+test "check if 'all zeros' function detects slices of zero" {
+    const empty = &[4:0]u8{ 0, 0, 0, 0 };
+    try std.testing.expect(is_slice_all_zeros(empty));
+}
+
+test "check if 'all zeros' function detects non-zero slices" {
+    const empty = "hello";
+    try std.testing.expect(!is_slice_all_zeros(empty));
 }
 
 // this will only work on linux or MacOS. for windows users, it will simply
@@ -249,6 +268,11 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
         return;
     }
 
+    // we'll use this variable to count the number of null lines in the output
+    // for the autoskip option
+    var num_zero_lines: usize = 0;
+    var skipping: bool = false;
+
     // split the buffer into segments based on the number of columns / bytes
     // specified via the command line arguments (default 16)
     var input_iterator = std.mem.window(
@@ -260,6 +284,24 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
 
     // loop through the buffer and print the output in chunks of the columns
     while (input_iterator.next()) |slice| {
+        // if the segment is all zeros, count it. otherwise reset the count
+        if (is_slice_all_zeros(slice)) {
+            num_zero_lines +|= 1;
+        } else {
+            num_zero_lines = 0;
+            skipping = false;
+        }
+
+        // if the user has selected autoskip mode and the number of all-null
+        // segments is two or more, skip the segment
+        if (params.autoskip and num_zero_lines == 2) {
+            if (!skipping) {
+                try writer.writeAll("*\n");
+                skipping = true;
+            }
+            file_pos += slice.len;
+            continue;
+        }
         // print the file position in hex (default) or decimal
         if (params.decimal) {
             try writer.print("{d:0>8}: ", .{file_pos});
@@ -299,6 +341,7 @@ pub fn main() !void {
 
     // specify what parameters our program can take via clap
     const params = comptime clap.parseParamsComptime(
+        \\-a                      Toggle autoskip: A '*' replaces null lines
         \\-h, --help              Display this help and exit
         \\-b, --binary            Binary digit dump, default is hex
         \\-c, --columns <INT>     Dump <INT> per line, default 16
@@ -364,6 +407,8 @@ pub fn main() !void {
     }
 
     var print_params = printParams{};
+
+    if (res.args.a != 0) print_params.autoskip = true;
 
     // setting to binary output also changes other parameters to reasonable
     // values (this can be overridden)
