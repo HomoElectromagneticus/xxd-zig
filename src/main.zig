@@ -22,7 +22,8 @@ const printParams = struct {
     line_length: usize = undefined,
     colorize: bool = true,
     c_style: bool = false,
-    c_style_name: []const u8 = "",
+    c_style_capitalise: bool = false,
+    c_style_name: []const u8 = undefined,
 };
 
 // look-up-tables for byte-to-hex conversion
@@ -216,7 +217,11 @@ fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !v
         }
     }
     if (params.c_style_name.len != 0) {
-        try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+        if (params.c_style_capitalise) {
+            try writer.print("\n}};\nunsigned int {s}_LEN = {d};\n", .{ params.c_style_name, input.len });
+        } else {
+            try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+        }
     } else {
         try writer.writeAll("\n");
     }
@@ -323,19 +328,20 @@ pub fn main() !void {
     // specify what parameters our program can take via clap
     const params = comptime clap.parseParamsComptime(
         \\-a                      Toggle autoskip: A '*' replaces null lines
-        \\-h, --help              Display this help and exit
         \\-b, --binary            Binary digit dump, default is hex
+        \\-C                      Capitalise variable names in C include file style (-i)
         \\-c, --columns <INT>     Dump <INT> per line, default 16
+        \\-d                      Show offset in decimal and not in hex
         \\-e                      Little-endian dump (default big-endian)
         \\-g <INT>                Group the output in <INT> bytes, default 2
-        \\    --string <STR>      Optional input string (ignores FILENAME)
+        \\-h, --help              Display this help and exit
         \\-i                      Output in C include file style
-        \\-n <STR>                Set the variable name for C include output (-i) 
         \\-l, --len <INT>         Stop writing after <INT> bytes 
+        \\-n <STR>                Set the variable name for C include file style (-i) 
         \\-o, --offset <INT>      Add an offset to the displayed file position
         \\-p                      Plain dump, no formatting
-        \\-d                      Show offset in decimal and not in hex
         \\-s, --seek <INT>        Start at <INT> bytes absolute
+        \\    --string <STR>      Optional input string (ignores FILENAME)
         \\-u                      Use upper-case hex letters, default is lower
         \\-R                      Disable color output
         \\<FILENAME>              Path of file to convert to hex
@@ -406,7 +412,16 @@ pub fn main() !void {
         print_params.num_columns = 12;
     }
 
-    if (res.args.n) |n| print_params.c_style_name = n;
+    // handle the C include file style name (did the user pass in the
+    // capitalisation argument?)
+    if (res.args.n) |n| {
+        print_params.c_style_name = n;
+        if (res.args.C != 0) {
+            print_params.c_style_capitalise = true;
+            var buf: [1024]u8 = undefined;
+            print_params.c_style_name = std.ascii.upperString(&buf, n);
+        }
+    }
 
     if (res.args.columns) |c| print_params.num_columns = c;
 
@@ -445,6 +460,8 @@ pub fn main() !void {
 
     // choose how to print the output based on where the input comes from
     if (res.args.string) |s| { //from an input string
+        // TODO: shouldn't we be giving a pointer to print_params instead of
+        //       making a copy?
         try print_output(stdout, print_params, s);
     } else if (res.positionals[0]) |positional| { //from an input file
         // interpret the filepath
@@ -469,6 +486,8 @@ pub fn main() !void {
         );
         defer gpa.allocator().free(file_contents);
 
+        // TODO: shouldn't we be giving a pointer to print_params instead of
+        //       making a copy?
         try print_output(stdout, print_params, file_contents);
     } else { //from stdin
         // get a buffered reader
@@ -481,6 +500,8 @@ pub fn main() !void {
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
 
+        // TODO: shouldn't we be giving a pointer to print_params instead of
+        //       making a copy?
         try print_output(stdout, print_params, stdin_contents);
     }
     try bw.flush(); // don't forget to flush!
