@@ -27,8 +27,8 @@ const printParams = struct {
 };
 
 // look-up-tables for byte-to-hex conversion
-const hexCharsetUpperCase: *const [16:0]u8 = "0123456789ABCDEF";
-const hexCharsetLowerCase: *const [16:0]u8 = "0123456789abcdef";
+const hexCharsetUpper = "0123456789ABCDEF";
+const hexCharsetLower = "0123456789abcdef";
 
 // use a look-up-table to convert the input data into hex (is much faster than
 // the zig standard library's format function)
@@ -36,11 +36,11 @@ fn byte_to_hex_string(input: u8, params: *printParams) [2]u8 {
     var output_string: [2]u8 = undefined;
     // pick the LUT depending on the user's choice of upper or lower case
     if (params.upper_case) {
-        output_string[0] = hexCharsetUpperCase[@as(usize, input >> 4) & 0x0F];
-        output_string[1] = hexCharsetUpperCase[@as(usize, input) & 0x0F];
+        output_string[0] = hexCharsetUpper[@as(usize, input >> 4) & 0x0F];
+        output_string[1] = hexCharsetUpper[@as(usize, input) & 0x0F];
     } else {
-        output_string[0] = hexCharsetLowerCase[@as(usize, input >> 4) & 0x0F];
-        output_string[1] = hexCharsetLowerCase[@as(usize, input) & 0x0F];
+        output_string[0] = hexCharsetLower[@as(usize, input >> 4) & 0x0F];
+        output_string[1] = hexCharsetLower[@as(usize, input) & 0x0F];
     }
     return output_string;
 }
@@ -55,8 +55,7 @@ test "confirm lower case hex convertion works" {
     try std.testing.expect(std.mem.eql(u8, &byte_to_hex_string(test_char, .{ .upper_case = false }), "6d"));
 }
 
-// this will only work on linux or MacOS. for windows users, it will simply
-// always return 80
+// only works on linux & MacOS. on windows, it will simply always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
     var winsize: std.posix.system.winsize = undefined;
     const errno = std.posix.system.ioctl(
@@ -93,8 +92,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
     // number of spaces for lining up the ascii characters in the final row
     var num_spaces: usize = 0;
 
-    // split the input into groups, where the size is determined by the print
-    // parameters
+    // split the input into groups, where size is given by the print parameters
     var groups_iterator = std.mem.window(
         u8,
         input,
@@ -103,8 +101,8 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
     );
 
     while (groups_iterator.next()) |group| {
-        // in case the last group during a little-endian dump is not full, add
-        // extra spaces
+        // if the last group for a little-endian dump is not full, add
+        // extra spaces for perfect alignment
         if ((params.little_endian) and (group.len < params.group_size)) {
             const delta: usize = 2 * (params.group_size - group.len);
             for (0..delta) |_| {
@@ -119,14 +117,12 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
 
             if (params.binary) {
                 // no color for binary ouput - this is what xxd does as well
-                // TODO: how does the binary output compare in terms of speed
-                //       to the original xxd?
+                // TODO: bin dumps are ~10 % faster than xxd. can we do better?
                 try writer.print("{b:0>8}", .{group[i]});
                 num_printed_chars += 8;
             } else {
-                // handle colors
                 // null bytes should be white
-                if (group[i] == 0) {
+                if (group[i] == 0 and params.colorize) {
                     try colorize(writer, Color.white);
                 }
                 // non-printable ASCII should be yellow, all ohers green
@@ -139,7 +135,6 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
                 // print's formatting, we can simply write directly to stdout
                 // or the file)
                 num_printed_chars += try writer.write(&byte_to_hex_string(group[i], params));
-                if (params.colorize) try uncolor(writer); // reset color
             }
         }
         // at the end of a group, add a space
@@ -164,25 +159,23 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
     return input.len;
 }
 
-// TODO: clean up the logic in this function, it's ugly
 // for the ascii output on the right-hand-side
 fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
     for (input) |raw_char| {
         // handle color
-        if (params.colorize) try colorize(writer, Color.green);
-        // printable ascii characters are all within 32 to 176. every other
-        // character should be a "." as xxd does it
+        if (params.colorize) {
+            switch (raw_char) {
+                0 => try colorize(writer, Color.white),
+                32...126 => try colorize(writer, Color.green),
+                else => try colorize(writer, Color.yellow),
+            }
+        }
+        // actual character output (with non-printable characters as '.')
         if (raw_char >= 32 and raw_char <= 126) {
             try writer.print("{c}", .{raw_char});
         } else {
-            if (params.colorize and raw_char == 0) {
-                try colorize(writer, Color.white);
-            } else if (params.colorize) {
-                try colorize(writer, Color.yellow);
-            }
             try writer.writeAll(".");
         }
-        if (params.colorize) try uncolor(writer); //turn off color
     }
 }
 
@@ -310,6 +303,8 @@ fn print_output(writer: anytype, params: *printParams, input: []const u8) !void 
         file_pos += try print_columns(writer, params, slice);
         try print_ascii(writer, params, slice);
         try writer.writeAll("\n");
+        if (params.colorize) try uncolor(writer); //reset color for next line
+
     }
 }
 
@@ -325,7 +320,7 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
-    // usage notes that will get print with the help text
+    // usage notes that will get printed with the help text
     const usage_notes =
         \\xxd-zig creates a hex dump of a given file or standard input
         \\Usage:
