@@ -32,7 +32,7 @@ const hexCharsetLowerCase: *const [16:0]u8 = "0123456789abcdef";
 
 // use a look-up-table to convert the input data into hex (is much faster than
 // the zig standard library's format function)
-fn byte_to_hex_string(input: u8, params: printParams) [2]u8 {
+fn byte_to_hex_string(input: u8, params: *printParams) [2]u8 {
     var output_string: [2]u8 = undefined;
     // pick the LUT depending on the user's choice of upper or lower case
     if (params.upper_case) {
@@ -86,7 +86,7 @@ fn uncolor(writer: anytype) !void {
     try writer.writeAll("\u{001b}[0m");
 }
 
-fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize {
+fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usize {
     // number of printed characters of translated input (not including the
     // index markers on the left!)
     var num_printed_chars: usize = 0;
@@ -166,7 +166,7 @@ fn print_columns(writer: anytype, params: printParams, input: []const u8) !usize
 
 // TODO: clean up the logic in this function, it's ugly
 // for the ascii output on the right-hand-side
-fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
+fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
     for (input) |raw_char| {
         // handle color
         if (params.colorize) try colorize(writer, Color.green);
@@ -186,7 +186,7 @@ fn print_ascii(writer: anytype, params: printParams, input: []const u8) !void {
     }
 }
 
-fn print_plain_dump(writer: anytype, params: printParams, input: []const u8) !void {
+fn print_plain_dump(writer: anytype, params: *printParams, input: []const u8) !void {
     for (input) |character| {
         if (params.binary) {
             try writer.print("{b:0>8}", .{character});
@@ -197,9 +197,17 @@ fn print_plain_dump(writer: anytype, params: printParams, input: []const u8) !vo
     try writer.writeAll("\n");
 }
 
-fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !void {
+fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !void {
     if (params.c_style_name.len != 0) {
-        try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+        if (params.c_style_capitalise) {
+            try writer.writeAll("unsigned char ");
+            for (params.c_style_name) |char| {
+                try writer.writeByte(std.ascii.toUpper(char));
+            }
+            try writer.writeAll("[] = {\n  ");
+        } else {
+            try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+        }
     } else {
         try writer.writeAll("  ");
     }
@@ -218,7 +226,11 @@ fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !v
     }
     if (params.c_style_name.len != 0) {
         if (params.c_style_capitalise) {
-            try writer.print("\n}};\nunsigned int {s}_LEN = {d};\n", .{ params.c_style_name, input.len });
+            try writer.writeAll("\n};\nunsigned int ");
+            for (params.c_style_name) |char| {
+                try writer.writeByte(std.ascii.toUpper(char));
+            }
+            try writer.print("_LEN = {d};\n", .{input.len});
         } else {
             try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
         }
@@ -227,7 +239,7 @@ fn print_c_inc_style(writer: anytype, params: printParams, input: []const u8) !v
     }
 }
 
-fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
+fn print_output(writer: anytype, params: *printParams, input: []const u8) !void {
     // define how much of the input to print
     var length = input.len;
     if (params.stop_after != 0) length = params.stop_after;
@@ -288,6 +300,7 @@ fn print_output(writer: anytype, params: printParams, input: []const u8) !void {
             continue;
         }
 
+        // TODO: is there a faster way to do this?
         // print the file position in hex (default) or decimal
         if (params.decimal) {
             try writer.print("{d:0>8}: ", .{file_pos});
@@ -358,7 +371,7 @@ pub fn main() !void {
     // initialize the clap diagnostics, used for reporting errors. is optional
     var diag = clap.Diagnostic{};
     // parse the command-line arguments
-    var res = clap.parse(clap.Help, &params, parsers, .{
+    const res = clap.parse(clap.Help, &params, parsers, .{
         .diagnostic = &diag,
         .allocator = gpa.allocator(),
     }) catch |err| {
@@ -398,7 +411,7 @@ pub fn main() !void {
     if (res.args.a != 0) print_params.autoskip = true;
 
     // setting to binary output also changes other parameters to reasonable
-    // values (this can be overridden)
+    // values (this can be overridden by the user passing in other options)
     if (res.args.binary != 0) {
         print_params.binary = true;
         print_params.group_size = 1;
@@ -406,34 +419,29 @@ pub fn main() !void {
     }
 
     // setting to c import style output also changes other parameters to
-    // reasonable values (this can be overridden)
+    // reasonable values (this can also be overridden)
     if (res.args.i != 0) {
         print_params.c_style = true;
         print_params.num_columns = 12;
     }
 
-    // handle the C include file style name (did the user pass in the
-    // capitalisation argument?)
-    if (res.args.n) |n| {
-        print_params.c_style_name = n;
-        if (res.args.C != 0) {
-            print_params.c_style_capitalise = true;
-            var buf: [1024]u8 = undefined;
-            print_params.c_style_name = std.ascii.upperString(&buf, n);
-        }
-    }
+    if (res.args.C != 0) print_params.c_style_capitalise = true;
 
     if (res.args.columns) |c| print_params.num_columns = c;
+
+    if (res.args.d != 0) print_params.decimal = true;
+
+    if (res.args.e != 0) print_params.little_endian = true;
 
     if (res.args.g) |g| print_params.group_size = g;
 
     if (res.args.len) |l| print_params.stop_after = l;
 
+    if (res.args.n) |n| print_params.c_style_name = n;
+
     if (res.args.offset) |o| print_params.position_offset = o;
 
     if (res.args.p != 0) print_params.postscript = true;
-
-    if (res.args.d != 0) print_params.decimal = true;
 
     if (res.args.seek) |s| print_params.start_at = s;
 
@@ -442,8 +450,6 @@ pub fn main() !void {
     if ((res.args.R != 0) or !(std.fs.File.isTty(stdout_file))) {
         print_params.colorize = false;
     }
-
-    if (res.args.e != 0) print_params.little_endian = true;
 
     // the printed line length - useful for ensuring nice text alignment
     if (print_params.binary == false) {
@@ -460,9 +466,7 @@ pub fn main() !void {
 
     // choose how to print the output based on where the input comes from
     if (res.args.string) |s| { //from an input string
-        // TODO: shouldn't we be giving a pointer to print_params instead of
-        //       making a copy?
-        try print_output(stdout, print_params, s);
+        try print_output(stdout, &print_params, s);
     } else if (res.positionals[0]) |positional| { //from an input file
         // interpret the filepath
         var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -486,9 +490,7 @@ pub fn main() !void {
         );
         defer gpa.allocator().free(file_contents);
 
-        // TODO: shouldn't we be giving a pointer to print_params instead of
-        //       making a copy?
-        try print_output(stdout, print_params, file_contents);
+        try print_output(stdout, &print_params, file_contents);
     } else { //from stdin
         // get a buffered reader
         const stdin_file = std.io.getStdIn();
@@ -500,9 +502,7 @@ pub fn main() !void {
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
 
-        // TODO: shouldn't we be giving a pointer to print_params instead of
-        //       making a copy?
-        try print_output(stdout, print_params, stdin_contents);
+        try print_output(stdout, &print_params, stdin_contents);
     }
     try bw.flush(); // don't forget to flush!
 }
