@@ -233,6 +233,10 @@ fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !
 }
 
 fn print_output(writer: anytype, params: *printParams, input: []const u8) !void {
+    // keep a local copy of the autoskip flag in order to turn it off for the
+    // very last line. otherwise autoskip could mask how big the file is
+    var autoskip: bool = params.autoskip;
+
     // define how much of the input to print
     var length = input.len;
     if (params.stop_after != 0) length = params.stop_after;
@@ -275,6 +279,10 @@ fn print_output(writer: anytype, params: *printParams, input: []const u8) !void 
 
     // loop through the buffer and print the output in chunks of the columns
     while (input_iterator.next()) |slice| {
+        // turn off autoskip for the last line. this prevents the last line
+        // from being skipped, which would end up hiding the file size
+        if (input_iterator.index == null) autoskip = false;
+
         // if the segment is all zeros, count it. otherwise reset the count
         if (std.mem.allEqual(u8, slice, 0)) {
             num_zero_lines +|= 1;
@@ -284,11 +292,11 @@ fn print_output(writer: anytype, params: *printParams, input: []const u8) !void 
 
         // if the user has selected autoskip mode and the number of all-null
         // segments is two or more, skip the segment
-        if (params.autoskip and num_zero_lines == 2) {
+        if (autoskip and num_zero_lines == 2) {
             try writer.writeAll("*\n");
             file_pos += slice.len;
             continue;
-        } else if (params.autoskip and num_zero_lines > 2) {
+        } else if (autoskip and num_zero_lines > 2) {
             file_pos += slice.len;
             continue;
         }
