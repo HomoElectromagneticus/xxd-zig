@@ -10,7 +10,6 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
 
 ## TODO
 
- - allow for capitalising the variable names in the C include style
  - allow reversing hex dumps back into "normal" files
  - see if we can't make the binary dump format faster by not using zig's print
    formating code and instead rolling our own
