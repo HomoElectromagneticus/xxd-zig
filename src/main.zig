@@ -47,12 +47,22 @@ fn byte_to_hex_string(input: u8, params: *printParams) [2]u8 {
 
 test "confirm upper case hex convertion works" {
     const test_char = 'L';
-    try std.testing.expect(std.mem.eql(u8, &byte_to_hex_string(test_char, .{ .upper_case = true }), "4C"));
+    var print_params = printParams{ .upper_case = true };
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &byte_to_hex_string(test_char, &print_params),
+        "4C",
+    ));
 }
 
 test "confirm lower case hex convertion works" {
     const test_char = 'm';
-    try std.testing.expect(std.mem.eql(u8, &byte_to_hex_string(test_char, .{ .upper_case = false }), "6d"));
+    var print_params = printParams{ .upper_case = false };
+    try std.testing.expect(std.mem.eql(
+        u8,
+        &byte_to_hex_string(test_char, &print_params),
+        "6d",
+    ));
 }
 
 // only works on linux & MacOS. on windows, it will simply always return 80
@@ -121,19 +131,18 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
                 try writer.print("{b:0>8}", .{group[i]});
                 num_printed_chars += 8;
             } else {
-                // null bytes should be white
-                if (group[i] == 0 and params.colorize) {
-                    try colorize(writer, Color.white);
+                if (params.colorize) {
+                    switch (group[i]) {
+                        // null bytes should be white
+                        0 => try colorize(writer, Color.white),
+                        // printable ASCII characters should be green
+                        32...126 => try colorize(writer, Color.green),
+                        // non-printable ASCII should be yellow
+                        else => try colorize(writer, Color.yellow),
+                    }
                 }
-                // non-printable ASCII should be yellow, all ohers green
-                else if ((group[i] < 32 or group[i] > 126) and params.colorize) {
-                    try colorize(writer, Color.yellow);
-                } else if (params.colorize) {
-                    try colorize(writer, Color.green);
-                }
-                // print the hex value of the current character (no need for
-                // print's formatting, we can simply write directly to stdout
-                // or the file)
+                // print the hex value of the character (no need for print()'s
+                // formatting, we can write directly to stdout or the file)
                 num_printed_chars += try writer.write(&byte_to_hex_string(group[i], params));
             }
         }
@@ -177,6 +186,16 @@ fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
             try writer.writeAll(".");
         }
     }
+}
+
+test "validate non-colorised ASCII output" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    var print_params = printParams{ .colorize = false };
+    const test_input = [_]u8{ 'A', 'b', '0', '1', 16, '$', 250 };
+    try print_ascii(list.writer(), &print_params, &test_input);
+
+    try std.testing.expect(std.mem.eql(u8, list.items, "Ab01.$."));
 }
 
 fn print_plain_dump(writer: anytype, params: *printParams, input: []const u8) !void {
