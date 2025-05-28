@@ -258,7 +258,7 @@ fn print_plain_dump(writer: anytype, params: *printParams, input: []const u8) !v
     try writer.writeAll("\n");
 }
 
-test "validate plain hex dump" {
+test "validate plain hex dump for correct hex translation" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     var print_params = printParams{ .colorize = false };
@@ -272,7 +272,24 @@ test "validate plain hex dump" {
     try std.testing.expect(std.mem.eql(u8, list.items, "4c6f72656d\n"));
 }
 
-test "validate plain binary dump" {
+test "validate plain hex dump for correct length" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    var print_params = printParams{
+        .colorize = false,
+        .num_columns = 8,
+    };
+    const test_input = [_]u8{ 'L', 'o', 'r', 'e', 'm', ' ', 'i', 'p', 's' };
+    try print_plain_dump(
+        list.writer(),
+        &print_params,
+        &test_input,
+    );
+
+    try std.testing.expect(list.items.len == 20);
+}
+
+test "validate plain binary dump for correct binary translation" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     var print_params = printParams{
@@ -284,6 +301,20 @@ test "validate plain binary dump" {
     try print_plain_dump(list.writer(), &print_params, &test_input);
 
     try std.testing.expect(std.mem.eql(u8, list.items, "0100110001101111\n"));
+}
+
+test "validate plain binary dump for correct length" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    var print_params = printParams{
+        .colorize = false,
+        .binary = true,
+        .num_columns = 3,
+    };
+    const test_input = [_]u8{ 'L', 'o', 0, '%' };
+    try print_plain_dump(list.writer(), &print_params, &test_input);
+
+    try std.testing.expect(list.items.len == 34);
 }
 
 fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !void {
