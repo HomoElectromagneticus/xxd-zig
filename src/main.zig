@@ -114,6 +114,13 @@ pub fn main() !void {
 
     if (res.args.a != 0) print_params.autoskip = true;
 
+    // setting the mode to plain dump (called postscript in the original xxd)
+    // also changes other parameters (which can be overriden)
+    if (res.args.p != 0) {
+        print_params.postscript = true;
+        print_params.num_columns = 30;
+    }
+
     // setting to binary output also changes other parameters to reasonable
     // values (this can be overridden by the user passing in other options)
     if (res.args.binary != 0) {
@@ -144,8 +151,6 @@ pub fn main() !void {
     if (res.args.n) |n| print_params.c_style_name = n;
 
     if (res.args.offset) |o| print_params.position_offset = o;
-
-    if (res.args.p != 0) print_params.postscript = true;
 
     if (res.args.seek) |s| print_params.start_at = s;
 

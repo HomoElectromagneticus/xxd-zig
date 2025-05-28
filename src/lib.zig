@@ -245,11 +245,14 @@ test "validate non-colorised ASCII output" {
 }
 
 fn print_plain_dump(writer: anytype, params: *printParams, input: []const u8) !void {
-    for (input) |character| {
+    for (input, 1..) |character, index| {
         if (params.binary) {
             try writer.print("{b:0>8}", .{character});
         } else {
             try writer.writeAll(&byte_to_hex_string(character, params));
+        }
+        if (index % params.num_columns == 0) {
+            if (index != input.len) try writer.writeByte('\n');
         }
     }
     try writer.writeAll("\n");
@@ -275,6 +278,7 @@ test "validate plain binary dump" {
     var print_params = printParams{
         .colorize = false,
         .binary = true,
+        .num_columns = 2,
     };
     const test_input = [_]u8{ 'L', 'o' };
     try print_plain_dump(list.writer(), &print_params, &test_input);
