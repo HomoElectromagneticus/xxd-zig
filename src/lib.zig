@@ -64,6 +64,39 @@ test "confirm lower case hex convertion works" {
     ));
 }
 
+// look-up-table for the byte-to-binary conversion (built during compilation)
+pub const binCharset: [256][]const u8 = blk: {
+    var temp: [256][]const u8 = undefined;
+    for (0..256) |value| {
+        temp[value] = std.fmt.comptimePrint("{b:0>8}", .{value});
+    }
+    break :blk temp;
+};
+
+test "confirm binary string LUT is correct for zero" {
+    const test_value: u8 = 0;
+    try std.testing.expectEqualStrings(
+        "00000000",
+        binCharset[test_value],
+    );
+}
+
+test "confirm binary string LUT is correct for 0x10" {
+    const test_value: u8 = 0x10;
+    try std.testing.expectEqualStrings(
+        "00010000",
+        binCharset[test_value],
+    );
+}
+
+test "confirm binary string LUT is correct for 0xff" {
+    const test_value: u8 = 0xff;
+    try std.testing.expectEqualStrings(
+        "11111111",
+        binCharset[test_value],
+    );
+}
+
 // colorize the terminal output
 fn colorize(writer: anytype, color: Color) !void {
     //                                              bold ---\   green --\
@@ -111,9 +144,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
 
             if (params.binary) {
                 // no color for binary ouput - this is what xxd does as well
-                // TODO: bin dumps are ~10 % faster than xxd. can we do better?
-                try writer.print("{b:0>8}", .{group[i]});
-                num_printed_chars += 8;
+                num_printed_chars += try writer.write(binCharset[group[i]]);
             } else {
                 if (params.colorize) {
                     switch (group[i]) {
@@ -247,7 +278,7 @@ test "validate non-colorised ASCII output" {
 fn print_plain_dump(writer: anytype, params: *printParams, input: []const u8) !void {
     for (input, 1..) |character, index| {
         if (params.binary) {
-            try writer.print("{b:0>8}", .{character});
+            try writer.writeAll(binCharset[character]);
         } else {
             try writer.writeAll(&byte_to_hex_string(character, params));
         }
@@ -337,7 +368,9 @@ fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !
             try writer.writeAll("\n  ");
         }
         if (params.binary) {
-            try writer.print("0b{b:0>8}, ", .{character});
+            try writer.writeAll("0b");
+            try writer.writeAll(binCharset[character]);
+            if (index != (input.len - 1)) try writer.writeAll(", ");
         } else {
             try writer.writeAll("0x");
             try writer.writeAll(&byte_to_hex_string(character, params));

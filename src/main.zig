@@ -121,19 +121,19 @@ pub fn main() !void {
         print_params.num_columns = 30;
     }
 
+    // setting to c import style output also changes other parameters to
+    // reasonable values (this can also be overridden)
+    if (res.args.i != 0) {
+        print_params.c_style = true;
+        print_params.num_columns = 12;
+    }
+
     // setting to binary output also changes other parameters to reasonable
     // values (this can be overridden by the user passing in other options)
     if (res.args.binary != 0) {
         print_params.binary = true;
         print_params.group_size = 1;
         print_params.num_columns = 6;
-    }
-
-    // setting to c import style output also changes other parameters to
-    // reasonable values (this can also be overridden)
-    if (res.args.i != 0) {
-        print_params.c_style = true;
-        print_params.num_columns = 12;
     }
 
     if (res.args.C != 0) print_params.c_style_capitalise = true;
@@ -190,6 +190,10 @@ pub fn main() !void {
             },
             else => |other_err| return other_err,
         };
+
+        // define the c sytle import name from the file path if it's not set by
+        // the user via the "-n" option
+        if (print_params.c_style_name.len == 0) print_params.c_style_name = positional;
 
         // load the file into memory in a single allocation
         const file_contents = try std.fs.cwd().readFileAlloc(
