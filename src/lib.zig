@@ -65,7 +65,7 @@ test "confirm lower case hex convertion works" {
 }
 
 // look-up-table for the byte-to-binary conversion (built during compilation)
-pub const binCharset: [256][]const u8 = blk: {
+const binCharset: [256][]const u8 = blk: {
     var temp: [256][]const u8 = undefined;
     for (0..256) |value| {
         temp[value] = std.fmt.comptimePrint("{b:0>8}", .{value});
