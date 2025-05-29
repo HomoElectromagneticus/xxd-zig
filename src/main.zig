@@ -79,13 +79,17 @@ pub fn main() !void {
         .diagnostic = &diag,
         .allocator = gpa.allocator(),
     }) catch |err| {
-        // if the user entered a strange option
+        // if the user entered a strange option or argument, let them know
         if (err == error.InvalidArgument) {
-            try stdout.writeAll("Invalid argument! Try passing in '-h'.\n");
+            try stdout.writeAll("Invalid option! Try passing in '-h' for help.\n");
             try bw.flush();
             return;
-            // report useful error and exit
+        } else if (err == error.InvalidCharacter) {
+            try stdout.writeAll("Invalid option argument! Try passing in '-h' for help.\n");
+            try bw.flush();
+            return;
         } else {
+            // report (semi) useful error and exit
             diag.report(std.io.getStdErr().writer(), err) catch {};
             return err;
         }
