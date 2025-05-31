@@ -477,10 +477,12 @@ pub fn print_output(writer: anytype, params: *printParams, input: []const u8) !v
     }
 }
 
-fn convert_hex_strings(input: []const u8) u8 {
-    if (input.len != 2) return 0;
-    var value: u8 = undefined;
-    value = switch (input[1]) {
+fn convert_hex_strings(input: []const u8) !u8 {
+    // the hex representation of u8 is always two chacters long!
+    if (input.len != 2) return error.TypeError;
+
+    var value: u8 = 0;
+    value += switch (input[1]) {
         '0'...'9' => input[1] - 48,
         'A'...'F' => input[1] - 55,
         'a'...'f' => input[1] - 87,
@@ -514,9 +516,14 @@ test "test hex coverter on a byte that's beyond ASCII (lower-case hex)" {
 
 pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !void {
     // a little warning message while this feature is in development
-    if (params.binary or params.autoskip or params.little_endian) {
+    if (params.binary or params.autoskip) {
         try writer.writeAll("We're not ready for that, check again later!\n");
         return;
+    }
+
+    // the original can't reverse little-endian or c-inlude style dumps either
+    if (params.little_endian or params.c_style) {
+        try writer.writeAll("zig-xxd: Sorry, cannot revert this type of hexdump\n");
     }
 
     var input_iterator = std.mem.window(
@@ -549,16 +556,16 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         }
 
         // this bit lets us deal with arbitrary byte groupings
-        if (slice[0] == ' ' or slice[1] == ' ') {
+        if (slice[0] == ' ') {
             continue;
         }
 
         // very helpful for "plain" postscript dumps
-        if (slice[0] == '\n' or slice[1] == '\n') {
+        if (slice[0] == '\n') {
             continue;
         }
 
-        try writer.writeByte(convert_hex_strings(slice));
+        try writer.writeByte(try convert_hex_strings(slice));
         _ = input_iterator.next();
     }
 }
