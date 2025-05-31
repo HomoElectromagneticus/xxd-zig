@@ -57,6 +57,7 @@ pub fn main() !void {
         \\-n <STR>                Set the variable name for C include file style (-i) 
         \\-o, --offset <INT>      Add an offset to the displayed file position
         \\-p                      Plain dump, no formatting
+        \\-r                      Reverse operation: convert dump into binary
         \\-s, --seek <INT>        Start at <INT> bytes absolute
         \\    --string <STR>      Optional input string (ignores FILENAME)
         \\-u                      Use upper-case hex letters, default is lower
@@ -164,6 +165,8 @@ pub fn main() !void {
         print_params.colorize = false;
     }
 
+    if (res.args.r != 0) print_params.reverse = true;
+
     // the printed line length - useful for ensuring nice text alignment
     if (print_params.binary == false) {
         print_params.line_length = (print_params.num_columns * 2) +
@@ -207,7 +210,11 @@ pub fn main() !void {
         );
         defer gpa.allocator().free(file_contents);
 
-        try lib.print_output(stdout, &print_params, file_contents);
+        if (print_params.reverse) {
+            try lib.reverse_input(stdout, &print_params, file_contents);
+        } else {
+            try lib.print_output(stdout, &print_params, file_contents);
+        }
     } else { //from stdin
         // get a buffered reader
         const stdin_file = std.io.getStdIn();
@@ -218,8 +225,11 @@ pub fn main() !void {
         // coming from stdin at compile time
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
-
-        try lib.print_output(stdout, &print_params, stdin_contents);
+        if (print_params.reverse) {
+            try lib.reverse_input(stdout, &print_params, stdin_contents);
+        } else {
+            try lib.print_output(stdout, &print_params, stdin_contents);
+        }
     }
     try bw.flush(); // don't forget to flush!
 }

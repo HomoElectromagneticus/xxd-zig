@@ -24,3 +24,5 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
  - test for memory leaks
  - improve error handling for the command-line arguments
  - choose a better name - "xzd" ?
+ - color bytes above 0x7F in bright red like `xxd` does (as well as the
+   byte immediately after)
