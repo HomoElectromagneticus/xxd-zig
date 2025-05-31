@@ -477,7 +477,8 @@ pub fn print_output(writer: anytype, params: *printParams, input: []const u8) !v
     }
 }
 
-fn convert_hex_strings(input: [2]u8) u8 {
+fn convert_hex_strings(input: []const u8) u8 {
+    if (input.len != 2) return 0;
     var value: u8 = undefined;
     value = switch (input[1]) {
         '0'...'9' => input[1] - 48,
@@ -518,50 +519,46 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         return;
     }
 
-    // split the input on lines, since that would be the format of the dumped
-    // data
-    // TODO: we cannot split on newlines with the algo below! it can break
-    //       "plain" postscript dumps. there should be another way to iterate
-    //       through the input... perhaps with a window iterator with a size of
-    //       two u8s and with the advance parameter set to 1?
-    var input_iterator = std.mem.splitScalar(u8, input, '\n');
+    var input_iterator = std.mem.window(
+        u8,
+        input,
+        2,
+        1,
+    );
 
     // iterate over the lines
+    var ready: bool = false;
+    if (params.postscript) ready = true;
     while (input_iterator.next()) |slice| {
-        // skip through the line until you find a ':' character, this jumps
+        // skip through the line until you find a ": " slice. this jumps
         // passed the index at the beginning of each line. we may not be able
         // to guarantee the format of the input data, so this is the safest way
-        var data_start: usize = 0;
-        if (!params.postscript) {
-            for (slice, 0..) |character, index| {
-                if (character != ':') {
-                    continue;
-                } else {
-                    data_start = index +| 2;
-                }
+        if ((params.postscript == false) and (ready == false)) {
+            if (std.mem.eql(u8, slice, ": ")) {
+                ready = true;
+                _ = input_iterator.next();
             }
+            continue;
         }
 
-        var buffer: [2]u8 = undefined;
-        var buffer_positition: u8 = 0;
-        var recovered_bytes: usize = 0;
-        for (slice[data_start..]) |character| {
-            // if we have recovered the expected number of bytes
-            if (recovered_bytes >= params.num_columns) break;
-
-            // simply skip over single whitespace characters so that we don't
-            // have to care how the data is grouped
-            if (character == ' ') continue;
-
-            // if we have loaded a full byte into the buffer
-            if (buffer_positition >= 2) {
-                try writer.writeByte(convert_hex_strings(buffer));
-                buffer_positition = 0;
-                recovered_bytes +|= 1;
-            }
-
-            buffer[buffer_positition] = character;
-            buffer_positition +|= 1;
+        // in xxd (and this version of xxd), a regular dump is separated from
+        // the ASCII representation by two spaces. this provides us with a hint
+        if (std.mem.eql(u8, slice, "  ")) {
+            ready = false;
+            continue;
         }
+
+        // this bit lets us deal with arbitrary byte groupings
+        if (slice[0] == ' ' or slice[1] == ' ') {
+            continue;
+        }
+
+        // very helpful for "plain" postscript dumps
+        if (slice[0] == '\n' or slice[1] == '\n') {
+            continue;
+        }
+
+        try writer.writeByte(convert_hex_strings(slice));
+        _ = input_iterator.next();
     }
 }
