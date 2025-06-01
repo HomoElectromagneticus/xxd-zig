@@ -499,24 +499,54 @@ fn convert_hex_strings(input: []const u8) !u8 {
     return value;
 }
 
-test "test hex coverter on a normal ASCII character (lower-case hex)" {
+test "test hex string coverter on a normal ASCII character (lower-case hex)" {
     const test_array = [_]u8{ '4', 'b' };
-    try std.testing.expectEqual('K', convert_hex_strings(test_array));
+    try std.testing.expectEqual('K', convert_hex_strings(&test_array));
 }
 
-test "test hex coverter on the line feed byte (upper-case hex)" {
+test "test hex string coverter on the line feed byte (upper-case hex)" {
     const test_array = [_]u8{ '0', 'A' };
-    try std.testing.expectEqual('\n', convert_hex_strings(test_array));
+    try std.testing.expectEqual('\n', convert_hex_strings(&test_array));
 }
 
-test "test hex coverter on a byte that's beyond ASCII (lower-case hex)" {
+test "test hex string coverter on a byte that's beyond ASCII (lower-case hex)" {
     const test_array = [_]u8{ 'f', '9' };
-    try std.testing.expectEqual(249, convert_hex_strings(test_array));
+    try std.testing.expectEqual(249, convert_hex_strings(&test_array));
+}
+
+fn convert_bin_strings(input: []const u8) !u8 {
+    // the binary representation of a u8 is always eight characters long!
+    if (input.len != 8) return error.TypeError;
+
+    var value: u8 = 0;
+    var string_index: u3 = 0;
+    // this loop should probably error if there is a character in the input
+    // that is not '0' or '1'
+    for (input) |character| {
+        if (character == '1') {
+            value +|= @as(u8, 1) << (7 - string_index);
+        } else if (character == '0') {} else {
+            return error.TypeError;
+        }
+        string_index +|= 1;
+    }
+
+    return value;
+}
+
+test "test binary string converter on the newline character" {
+    const test_string = "00001010";
+    try std.testing.expectEqual('\n', convert_bin_strings(test_string));
+}
+
+test "test binary string converter on an ASCII character" {
+    const test_string = "01011010";
+    try std.testing.expectEqual('Z', convert_bin_strings(test_string));
 }
 
 pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !void {
     // a little warning message while this feature is in development
-    if (params.binary or params.autoskip) {
+    if (params.autoskip) {
         try writer.writeAll("We're not ready for that, check again later!\n");
         return;
     }
@@ -526,10 +556,15 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         try writer.writeAll("zig-xxd: Sorry, cannot revert this type of hexdump\n");
     }
 
+    // the window size will depend on if we are reversing a hex or binary dump
+    const window_size: u8 = switch (params.binary) {
+        true => 8,
+        false => 2,
+    };
     var input_iterator = std.mem.window(
         u8,
         input,
-        2,
+        window_size,
         1,
     );
 
@@ -541,7 +576,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         // passed the index at the beginning of each line. we may not be able
         // to guarantee the format of the input data, so this is the safest way
         if ((params.postscript == false) and (ready == false)) {
-            if (std.mem.eql(u8, slice, ": ")) {
+            if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], ": ")) {
                 ready = true;
                 _ = input_iterator.next();
             }
@@ -550,7 +585,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
 
         // in xxd (and this version of xxd), a regular dump is separated from
         // the ASCII representation by two spaces. this provides us with a hint
-        if (std.mem.eql(u8, slice, "  ")) {
+        if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "  ")) {
             ready = false;
             continue;
         }
@@ -565,7 +600,12 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
             continue;
         }
 
-        try writer.writeByte(try convert_hex_strings(slice));
-        _ = input_iterator.next();
+        if (params.binary) {
+            try writer.writeByte(try convert_bin_strings(slice));
+            inline for (0..7) |_| _ = input_iterator.next();
+        } else {
+            try writer.writeByte(try convert_hex_strings(slice));
+            _ = input_iterator.next();
+        }
     }
 }
