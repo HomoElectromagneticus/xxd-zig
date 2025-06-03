@@ -525,17 +525,12 @@ fn convert_bin_strings(input: []const u8) !u8 {
         switch (character) {
             '0' => {},
             '1' => value +|= @as(u8, 1) << (7 - input_index),
-            else => return error.TypeError,
+            else => return error.InvalidCharacter,
         }
         input_index +|= 1;
     }
 
     return value;
-}
-
-test "test binary string converter on the newline character" {
-    const test_string = "00001010";
-    try std.testing.expectEqual('\n', convert_bin_strings(test_string));
 }
 
 test "test binary string converter on an ASCII character" {
@@ -566,17 +561,24 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         1,
     );
 
-    // setup iteration
-    var running_over_index: bool = false;
-    if (params.postscript) running_over_index = true;
     // parameters needed to handle autoskip
     var last_newline: usize = 0; //where in the input we found the last '\n'
     var last_colon: usize = 0; //where in the input we found the last ": "
+    const index_base: u8 = switch (params.decimal) {
+        true => 10,
+        false => 16,
+    };
     var last_data_index: usize = 0;
     var new_data_index: usize = 0;
     var skipping: bool = false;
+
+    // setup iteration
+    var running_over_index: bool = false;
+    if (params.postscript) running_over_index = true;
     // iterate
     while (input_iterator.next()) |slice| {
+
+        // if autoskip is enabled, check for a "\n*" sequence
         if (params.autoskip) {
             if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "\n*")) {
                 skipping = true;
@@ -585,24 +587,24 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
             }
         }
 
-        // skip through the line until you find a ": " slice. this jumps
-        // passed the index at the beginning of each line. we may not be able
-        // to guarantee the format of the input data, so this is the safest way
+        // skip through the line until a ": " sequence. this lets us handle
+        // data dumped with autoskip as well as simply moving the window
+        // iterator to where the raw data is
         if ((params.postscript == false) and (running_over_index == false)) {
             if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], ": ")) {
                 running_over_index = true;
-                if (input_iterator.index) |index| last_colon = index;
+
+                // keep track of where we are in the data (needed for autoskip)
+                if (input_iterator.index) |idx| last_colon = idx;
                 last_data_index = new_data_index;
-                // TODO: need to use a different base depending on options
                 new_data_index = try std.fmt.parseUnsigned(
                     u8,
                     input[last_newline..(last_colon - 1)],
-                    16,
+                    index_base,
                 );
 
-                // if we've gotten here after finding the * from autoskip, that
-                // means we are back on a line with real data. we should write
-                // out all the null bytes that we skipped over
+                // if we find a ": " sequence after a "\n*" from autoskip, we
+                // are back to non-null data. must write the skipped null bytes
                 if (skipping) {
                     for (0..(new_data_index - last_data_index - params.num_columns)) |_| {
                         try writer.writeByte(0);
@@ -618,7 +620,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         // in xxd (and this version of xxd), a regular dump is separated from
         // the ASCII representation by two spaces. this provides us with a hint
         if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "  ")) {
-            if (input_iterator.index) |index| last_newline = index + params.num_columns + 2;
+            if (input_iterator.index) |idx| last_newline = idx + params.num_columns + 2;
             running_over_index = false;
             continue;
         }
@@ -626,7 +628,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         if (slice[0] == ' ') continue; // handle arbitrary byte groupings
 
         if (slice[0] == '\n') {
-            if (input_iterator.index) |index| last_newline = index;
+            if (input_iterator.index) |idx| last_newline = idx;
             continue;
         }
 
