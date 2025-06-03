@@ -487,14 +487,14 @@ fn convert_hex_strings(input: []const u8) !u8 {
         'A'...'F' => input[1] - 55,
         'a'...'f' => input[1] - 87,
         // this should probably error if we get a different character
-        else => 0,
+        else => return error.InvalidCharacter,
     };
     value += switch (input[0]) {
         '0'...'9' => (input[0] - 48) << 4,
         'A'...'F' => (input[0] - 55) << 4,
         'a'...'f' => (input[0] - 87) << 4,
         // this should probably error if we get a different character
-        else => 0,
+        else => return error.InvalidCharacter,
     };
     return value;
 }
@@ -519,16 +519,15 @@ fn convert_bin_strings(input: []const u8) !u8 {
     if (input.len != 8) return error.TypeError;
 
     var value: u8 = 0;
-    var string_index: u3 = 0;
-    // this loop should probably error if there is a character in the input
-    // that is not '0' or '1'
+    var input_index: u3 = 0; // must be a u3 for the bitshift operation below
+
     for (input) |character| {
-        if (character == '1') {
-            value +|= @as(u8, 1) << (7 - string_index);
-        } else if (character == '0') {} else {
-            return error.TypeError;
+        switch (character) {
+            '0' => {},
+            '1' => value +|= @as(u8, 1) << (7 - input_index),
+            else => return error.TypeError,
         }
-        string_index +|= 1;
+        input_index +|= 1;
     }
 
     return value;
@@ -544,13 +543,12 @@ test "test binary string converter on an ASCII character" {
     try std.testing.expectEqual('Z', convert_bin_strings(test_string));
 }
 
-pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !void {
-    // a little warning message while this feature is in development
-    if (params.autoskip) {
-        try writer.writeAll("We're not ready for that, check again later!\n");
-        return;
-    }
+test "test binary string converter outside the ASCII range" {
+    const test_string = "11111111";
+    try std.testing.expectEqual(0xff, convert_bin_strings(test_string));
+}
 
+pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !void {
     // the original can't reverse little-endian or c-inlude style dumps either
     if (params.little_endian or params.c_style) {
         try writer.writeAll("zig-xxd: Sorry, cannot revert this type of hexdump\n");
@@ -568,16 +566,50 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         1,
     );
 
-    // iterate over the lines
-    var ready: bool = false;
-    if (params.postscript) ready = true;
+    // setup iteration
+    var running_over_index: bool = false;
+    if (params.postscript) running_over_index = true;
+    // parameters needed to handle autoskip
+    var last_newline: usize = 0; //where in the input we found the last '\n'
+    var last_colon: usize = 0; //where in the input we found the last ": "
+    var last_data_index: usize = 0;
+    var new_data_index: usize = 0;
+    var skipping: bool = false;
+    // iterate
     while (input_iterator.next()) |slice| {
+        if (params.autoskip) {
+            if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "\n*")) {
+                skipping = true;
+                last_newline += 2;
+                continue;
+            }
+        }
+
         // skip through the line until you find a ": " slice. this jumps
         // passed the index at the beginning of each line. we may not be able
         // to guarantee the format of the input data, so this is the safest way
-        if ((params.postscript == false) and (ready == false)) {
+        if ((params.postscript == false) and (running_over_index == false)) {
             if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], ": ")) {
-                ready = true;
+                running_over_index = true;
+                if (input_iterator.index) |index| last_colon = index;
+                last_data_index = new_data_index;
+                // TODO: need to use a different base depending on options
+                new_data_index = try std.fmt.parseUnsigned(
+                    u8,
+                    input[last_newline..(last_colon - 1)],
+                    16,
+                );
+
+                // if we've gotten here after finding the * from autoskip, that
+                // means we are back on a line with real data. we should write
+                // out all the null bytes that we skipped over
+                if (skipping) {
+                    for (0..(new_data_index - last_data_index - params.num_columns)) |_| {
+                        try writer.writeByte(0);
+                    }
+                    skipping = false;
+                }
+
                 _ = input_iterator.next();
             }
             continue;
@@ -586,20 +618,19 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         // in xxd (and this version of xxd), a regular dump is separated from
         // the ASCII representation by two spaces. this provides us with a hint
         if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "  ")) {
-            ready = false;
+            if (input_iterator.index) |index| last_newline = index + params.num_columns + 2;
+            running_over_index = false;
             continue;
         }
 
-        // this bit lets us deal with arbitrary byte groupings
-        if (slice[0] == ' ') {
-            continue;
-        }
+        if (slice[0] == ' ') continue; // handle arbitrary byte groupings
 
-        // very helpful for "plain" postscript dumps
         if (slice[0] == '\n') {
+            if (input_iterator.index) |index| last_newline = index;
             continue;
         }
 
+        // do the conversion and print the results
         if (params.binary) {
             try writer.writeByte(try convert_bin_strings(slice));
             inline for (0..7) |_| _ = input_iterator.next();
