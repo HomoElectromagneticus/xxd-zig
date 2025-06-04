@@ -2,6 +2,13 @@ const std = @import("std");
 const clap = @import("clap");
 const lib = @import("lib.zig");
 
+const reverse_modes_message =
+    \\xxd-zig: Error while parsing the index in reverse mode! This could be
+    \\         because the hex dump was done in "plain" postscript mode or
+    \\         with "autoskip" enabled and the corresponding arguments
+    \\         (-p and -a, respectively) were not passed in while reversing.
+;
+
 // only works on linux & MacOS. on windows, it will simply always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
     var winsize: std.posix.system.winsize = undefined;
@@ -211,7 +218,20 @@ pub fn main() !void {
         defer gpa.allocator().free(file_contents);
 
         if (print_params.reverse) {
-            try lib.reverse_input(stdout, &print_params, file_contents);
+            lib.reverse_input(
+                stdout,
+                &print_params,
+                file_contents,
+            ) catch |err| switch (err) {
+                // TODO: how to error with a specific status code like other
+                //       command-line programs?
+                error.IndexParseError => {
+                    try stdout.writeByte('\n');
+                    try stdout.writeAll(reverse_modes_message);
+                    try stdout.writeByte('\n');
+                },
+                else => return err,
+            };
         } else {
             try lib.print_output(stdout, &print_params, file_contents);
         }
@@ -226,7 +246,20 @@ pub fn main() !void {
         const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
         defer gpa.allocator().free(stdin_contents);
         if (print_params.reverse) {
-            try lib.reverse_input(stdout, &print_params, stdin_contents);
+            lib.reverse_input(
+                stdout,
+                &print_params,
+                stdin_contents,
+            ) catch |err| switch (err) {
+                // TODO: how to error with a specific status code like other
+                //       command-line programs?
+                error.IndexParseError => {
+                    try stdout.writeByte('\n');
+                    try stdout.writeAll(reverse_modes_message);
+                    try stdout.writeByte('\n');
+                },
+                else => return err,
+            };
         } else {
             try lib.print_output(stdout, &print_params, stdin_contents);
         }

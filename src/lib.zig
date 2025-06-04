@@ -564,6 +564,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
     // parameters needed to handle autoskip
     var last_newline: usize = 0; //where in the input we found the last '\n'
     var last_colon: usize = 0; //where in the input we found the last ": "
+    var line_number: usize = 0;
     const index_base: u8 = switch (params.decimal) {
         true => 10,
         false => 16,
@@ -577,12 +578,14 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
     if (params.postscript) running_over_index = true;
     // iterate
     while (input_iterator.next()) |slice| {
+        var write_buffer: u8 = undefined;
 
         // if autoskip is enabled, check for a "\n*" sequence
         if (params.autoskip) {
             if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "\n*")) {
                 skipping = true;
                 last_newline += 2;
+                line_number += 1;
                 continue;
             }
         }
@@ -597,11 +600,16 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
                 // keep track of where we are in the data (needed for autoskip)
                 if (input_iterator.index) |idx| last_colon = idx;
                 last_data_index = new_data_index;
-                new_data_index = try std.fmt.parseUnsigned(
-                    u8,
+                if (std.fmt.parseUnsigned(
+                    usize,
                     input[last_newline..(last_colon - 1)],
                     index_base,
-                );
+                )) |value| {
+                    new_data_index = value;
+                } else |err| switch (err) {
+                    error.InvalidCharacter => return error.IndexParseError,
+                    else => return err,
+                }
 
                 // if we find a ": " sequence after a "\n*" from autoskip, we
                 // are back to non-null data. must write the skipped null bytes
@@ -621,6 +629,8 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         // the ASCII representation by two spaces. this provides us with a hint
         if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "  ")) {
             if (input_iterator.index) |idx| last_newline = idx + params.num_columns + 2;
+            // skip over the ASCII data
+            for (0..params.num_columns) |_| _ = input_iterator.next();
             running_over_index = false;
             continue;
         }
@@ -629,15 +639,30 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
 
         if (slice[0] == '\n') {
             if (input_iterator.index) |idx| last_newline = idx;
+            line_number += 1;
             continue;
         }
 
         // do the conversion and print the results
+        // TODO: count the number of things printed. if we did not print at all
+        //       after the iteration is complete, we should warn the user that
+        //       they maybe used the wrong option
         if (params.binary) {
-            try writer.writeByte(try convert_bin_strings(slice));
+            if (convert_bin_strings(slice)) |value| {
+                write_buffer = value;
+            } else |err| switch (err) {
+                error.InvalidCharacter => {
+                    std.debug.print("Bad hex string \"{s}\" at data index {d}", .{ slice, last_data_index });
+                    return err;
+                },
+                else => |other_err| return other_err,
+            }
+            write_buffer = try convert_bin_strings(slice);
+            try writer.writeByte(write_buffer);
             inline for (0..7) |_| _ = input_iterator.next();
         } else {
-            try writer.writeByte(try convert_hex_strings(slice));
+            write_buffer = try convert_hex_strings(slice);
+            try writer.writeByte(write_buffer);
             _ = input_iterator.next();
         }
     }
