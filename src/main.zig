@@ -9,6 +9,12 @@ const reverse_modes_message =
     \\         (-p and -a, respectively) were not passed in while reversing.
 ;
 
+const reverse_nothing_printed_message =
+    \\xxd-zig: Nothing was printed while running in reverse mode! This
+    \\         could be caused by incorrectly set options. Try passing
+    \\         in -h for for help.
+;
+
 // only works on linux & MacOS. on windows, it will simply always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
     var winsize: std.posix.system.winsize = undefined;
@@ -230,6 +236,11 @@ pub fn main() !void {
                     try stdout.writeAll(reverse_modes_message);
                     try stdout.writeByte('\n');
                 },
+                error.NothingWritten => {
+                    try stdout.writeByte('\n');
+                    try stdout.writeAll(reverse_nothing_printed_message);
+                    try stdout.writeByte('\n');
+                },
                 else => return err,
             };
         } else {
@@ -256,6 +267,11 @@ pub fn main() !void {
                 error.IndexParseError => {
                     try stdout.writeByte('\n');
                     try stdout.writeAll(reverse_modes_message);
+                    try stdout.writeByte('\n');
+                },
+                error.NothingWritten => {
+                    try stdout.writeByte('\n');
+                    try stdout.writeAll(reverse_nothing_printed_message);
                     try stdout.writeByte('\n');
                 },
                 else => return err,
