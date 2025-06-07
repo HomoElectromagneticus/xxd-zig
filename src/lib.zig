@@ -653,6 +653,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
                 write_buffer = value;
             } else |err| switch (err) {
                 error.InvalidCharacter => {
+                    // TODO: handle this error gracefully
                     std.debug.print("Bad binary string \"{s}\" at data index {d}", .{ slice, last_data_index });
                     return err;
                 },
@@ -666,6 +667,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
                 write_buffer = value;
             } else |err| switch (err) {
                 error.InvalidCharacter => {
+                    // TODO: handle this error gracefully
                     std.debug.print("Bad hex string \"{s}\" at data index {d}", .{ slice, last_data_index });
                     return err;
                 },
@@ -679,4 +681,17 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
 
     // catch if we did not print anything and raise an error
     if (bytes_writen <= 0) return error.NothingWritten;
+}
+
+test "writing nothing because of malformed reverse input" {
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+    var params = printParams{ .reverse = true };
+    const malformed_input = "ghijklmnopqrstuv.$";
+
+    try std.testing.expectError(error.NothingWritten, reverse_input(
+        buffer.writer(),
+        &params,
+        malformed_input,
+    ));
 }
