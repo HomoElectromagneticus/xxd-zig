@@ -2,17 +2,31 @@ const std = @import("std");
 const clap = @import("clap");
 const lib = @import("lib.zig");
 
-const reverse_modes_message =
+const rev_modes_msg =
+    \\
     \\xxd-zig: Error while parsing the index in reverse mode! This could be
     \\         because the hex dump was done in "plain" postscript mode or
     \\         with "autoskip" enabled and the corresponding arguments
     \\         (-p and -a, respectively) were not passed in while reversing.
+    \\
 ;
 
-const reverse_nothing_printed_message =
+const rev_invalid_char_msg =
+    \\
+    \\xxd-zig: Caught an invalid character while reversing dump. Aborting...
+    \\
+;
+
+const rev_nothing_printed_msg =
     \\xxd-zig: Nothing was printed while running in reverse mode! This
     \\         could be caused by incorrectly set options. Try passing
     \\         in -h for for help.
+    \\
+;
+
+const rev_input_string_msg =
+    \\xxd-zig: Reverse mode for an input string is not allowed.
+    \\
 ;
 
 // only works on linux & MacOS. on windows, it will simply always return 80
@@ -30,7 +44,7 @@ fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
     }
 }
 
-pub fn main() !void {
+pub fn main() !u8 {
     // stdout is for the actual output of the application
     const stdout_file = std.io.getStdOut();
     var bw = std.io.bufferedWriter(stdout_file.writer());
@@ -97,11 +111,11 @@ pub fn main() !void {
         if (err == error.InvalidArgument) {
             try stdout.writeAll("Invalid option! Try passing in '-h' for help.\n");
             try bw.flush();
-            return;
+            return 1;
         } else if (err == error.InvalidCharacter) {
             try stdout.writeAll("Invalid option argument! Try passing in '-h' for help.\n");
             try bw.flush();
-            return;
+            return 1;
         } else {
             // report (semi) useful error and exit
             diag.report(std.io.getStdErr().writer(), err) catch {};
@@ -120,12 +134,19 @@ pub fn main() !void {
             .max_width = get_terminal_width(std.io.getStdOut().handle),
             .spacing_between_parameters = 0,
         };
-        return clap.help(
+        try clap.help(
             std.io.getStdErr().writer(),
             clap.Help,
             &params,
             help_options,
         );
+        return 0;
+        // return clap.help(
+        //     std.io.getStdErr().writer(),
+        //     clap.Help,
+        //     &params,
+        //     help_options,
+        // );
     }
 
     var print_params = lib.printParams{};
@@ -134,6 +155,7 @@ pub fn main() !void {
 
     // setting the mode to plain dump (called postscript in the original xxd)
     // also changes other parameters (which can be overriden)
+    // TODO: Do not allow autoskip for plain dumps
     if (res.args.p != 0) {
         print_params.postscript = true;
         print_params.num_columns = 30;
@@ -141,6 +163,7 @@ pub fn main() !void {
 
     // setting to c import style output also changes other parameters to
     // reasonable values (this can also be overridden)
+    // TODO: Do not allow autoskip for c-include style dumps
     if (res.args.i != 0) {
         print_params.c_style = true;
         print_params.num_columns = 12;
@@ -158,6 +181,8 @@ pub fn main() !void {
 
     if (res.args.columns) |c| print_params.num_columns = c;
 
+    // TODO: if the user has selected "plain" postscript dump mode, they should
+    //       be warned that also selecting this option does nothing
     if (res.args.d != 0) print_params.decimal = true;
 
     if (res.args.e != 0) print_params.little_endian = true;
@@ -193,92 +218,89 @@ pub fn main() !void {
         }
     }
 
-    // choose how to print the output based on where the input comes from
-    if (res.args.string) |s| { //from an input string
+    // handle the special case of the string input
+    if (res.args.string) |s| {
+        // reverse mode for an input string is not allowed. this is kind of a
+        // nonsensical use case
+        if (print_params.reverse) {
+            try stdout.writeAll(rev_input_string_msg);
+            try bw.flush();
+            return 1;
+        }
         try lib.print_output(stdout, &print_params, s);
-    } else if (res.positionals[0]) |positional| { //from an input file
-        // interpret the filepath
-        var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-        const path: []u8 = std.fs.realpath(
-            positional,
-            &path_buffer,
+        try bw.flush();
+        return 0;
+    }
+
+    // allocate memory for input from stdin or a file
+    const input = blk: {
+        var input: []u8 = undefined;
+        if (res.positionals[0]) |positional| { //from an input file
+            // interpret the filepath
+            var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+            const path: []u8 = std.fs.realpath(
+                positional,
+                &path_buffer,
+            ) catch |err| switch (err) {
+                error.FileNotFound => {
+                    try stdout.print("Error: File \'{s}\' not found!\n", .{positional});
+                    try bw.flush();
+                    return 1;
+                },
+                else => |other_err| return other_err,
+            };
+
+            // define the c sytle import name from the file path if it's not
+            // set by the user via the "-n" option
+            if (print_params.c_style_name.len == 0) print_params.c_style_name = positional;
+
+            // load the whole file into memory in a single allocation
+            input = try std.fs.cwd().readFileAlloc(
+                gpa.allocator(),
+                path,
+                std.math.maxInt(usize),
+            );
+        } else { //from stdin
+            // get a buffered reader
+            const stdin_file = std.io.getStdIn();
+            var br = std.io.bufferedReader(stdin_file.reader());
+            const stdin = br.reader();
+
+            // allocate memory to read from standard input
+            input = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
+        }
+        break :blk input;
+    };
+    defer gpa.allocator().free(input);
+
+    // print the output depending on if we are in normal or reverse mode
+    if (print_params.reverse) {
+        lib.reverse_input(
+            stdout,
+            &print_params,
+            input,
         ) catch |err| switch (err) {
-            error.FileNotFound => {
-                try stdout.print("Error: File \'{s}\' not found!\n", .{positional});
+            error.IndexParseError => {
+                try stdout.writeAll(rev_modes_msg);
                 try bw.flush();
-                return;
+                return 1;
             },
-            else => |other_err| return other_err,
+            error.InvalidCharacter => {
+                try stdout.writeAll(rev_invalid_char_msg);
+                try bw.flush();
+                return 1;
+            },
+            error.NothingWritten => {
+                try stdout.writeAll(rev_nothing_printed_msg);
+                try bw.flush();
+                return 1;
+            },
+            else => return err,
         };
-
-        // define the c sytle import name from the file path if it's not set by
-        // the user via the "-n" option
-        if (print_params.c_style_name.len == 0) print_params.c_style_name = positional;
-
-        // load the file into memory in a single allocation
-        const file_contents = try std.fs.cwd().readFileAlloc(
-            gpa.allocator(),
-            path,
-            std.math.maxInt(usize),
-        );
-        defer gpa.allocator().free(file_contents);
-
-        if (print_params.reverse) {
-            lib.reverse_input(
-                stdout,
-                &print_params,
-                file_contents,
-            ) catch |err| switch (err) {
-                // TODO: how to error with a specific status code like other
-                //       command-line programs?
-                error.IndexParseError => {
-                    try stdout.writeByte('\n');
-                    try stdout.writeAll(reverse_modes_message);
-                    try stdout.writeByte('\n');
-                },
-                error.NothingWritten => {
-                    try stdout.writeByte('\n');
-                    try stdout.writeAll(reverse_nothing_printed_message);
-                    try stdout.writeByte('\n');
-                },
-                else => return err,
-            };
-        } else {
-            try lib.print_output(stdout, &print_params, file_contents);
-        }
-    } else { //from stdin
-        // get a buffered reader
-        const stdin_file = std.io.getStdIn();
-        var br = std.io.bufferedReader(stdin_file.reader());
-        const stdin = br.reader();
-
-        // we'll need to allocate memory since we don't know the size of what's
-        // coming from stdin at compile time
-        const stdin_contents = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
-        defer gpa.allocator().free(stdin_contents);
-        if (print_params.reverse) {
-            lib.reverse_input(
-                stdout,
-                &print_params,
-                stdin_contents,
-            ) catch |err| switch (err) {
-                // TODO: how to error with a specific status code like other
-                //       command-line programs?
-                error.IndexParseError => {
-                    try stdout.writeByte('\n');
-                    try stdout.writeAll(reverse_modes_message);
-                    try stdout.writeByte('\n');
-                },
-                error.NothingWritten => {
-                    try stdout.writeByte('\n');
-                    try stdout.writeAll(reverse_nothing_printed_message);
-                    try stdout.writeByte('\n');
-                },
-                else => return err,
-            };
-        } else {
-            try lib.print_output(stdout, &print_params, stdin_contents);
-        }
+    } else {
+        // TODO: think about error handling here
+        try lib.print_output(stdout, &print_params, input);
     }
     try bw.flush(); // don't forget to flush!
+    return 0;
 }
