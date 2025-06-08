@@ -27,3 +27,35 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
  - choose a better name - "xzd" ?
  - color bytes above 0x7F in bright red like `xxd` does (as well as the
    byte immediately after)
+
+## Usage
+
+```
+Usage:
+    xxd-zig <options> <filename>
+
+    If --string is not set and a filename not given, the
+    program will read from stdin. If more than one filename
+    is passed in, only the first will be considered.
+
+Options:
+    -a                     Toggle autoskip: A '*' replaces null lines
+    -b, --binary           Binary digit dump, default is hex
+    -C                     Capitalise variable names in C include file style (-i)
+    -c, --columns <INT>    Dump <INT> per line, default 16
+    -d                     Show offset in decimal and not in hex
+    -e                     Little-endian dump (default big-endian)
+    -g <INT>               Group the output in <INT> bytes, default 2
+    -h, --help             Display this help and exit
+    -i                     Output in C include file style
+    -l, --len <INT>        Stop writing after <INT> bytes
+    -n <STR>               Set the variable name for C include file style (-i)
+    -o, --offset <INT>     Add an offset to the displayed file position
+    -p                     Plain dump, no formatting
+    -r                     Reverse operation: convert dump into binary
+    -s, --seek <INT>       Start at <INT> bytes absolute
+        --string <STR>     Optional input string (ignores FILENAME and stdin)
+    -u                     Use upper-case hex letters, default is lower
+    -R                     Disable color output
+    <FILENAME>             Path of file to convert to hex
+```

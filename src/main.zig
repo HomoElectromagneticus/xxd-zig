@@ -29,6 +29,26 @@ const rev_input_string_msg =
     \\
 ;
 
+const no_plain_autoskip_msg =
+    \\xxd-zig: Cannot use autoskip when doing a "plain" postscript dump.
+    \\
+;
+
+const no_c_autoskip_msg =
+    \\xxd-zig: Cannot use autoskip when doing a C include style dump.
+    \\
+;
+
+const no_index_msg =
+    \\xxd-zig: There is no index in this mode, the -d option has no affect.
+    \\
+;
+
+const incompatible_dump_type_msg =
+    \\zig-xxd: Sorry, cannot revert this type of hexdump.
+    \\
+;
+
 // only works on linux & MacOS. on windows, it will simply always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
     var winsize: std.posix.system.winsize = undefined;
@@ -86,7 +106,7 @@ pub fn main() !u8 {
         \\-p                      Plain dump, no formatting
         \\-r                      Reverse operation: convert dump into binary
         \\-s, --seek <INT>        Start at <INT> bytes absolute
-        \\    --string <STR>      Optional input string (ignores FILENAME)
+        \\    --string <STR>      Optional input string (ignores FILENAME and stdin)
         \\-u                      Use upper-case hex letters, default is lower
         \\-R                      Disable color output
         \\<FILENAME>              Path of file to convert to hex
@@ -118,7 +138,7 @@ pub fn main() !u8 {
             return 1;
         } else {
             // report (semi) useful error and exit
-            diag.report(std.io.getStdErr().writer(), err) catch {};
+            try diag.report(std.io.getStdErr().writer(), err);
             return err;
         }
     };
@@ -149,18 +169,36 @@ pub fn main() !u8 {
 
     // setting the mode to plain dump (called postscript in the original xxd)
     // also changes other parameters (which can be overriden)
-    // TODO: Do not allow autoskip for plain dumps
     if (res.args.p != 0) {
         print_params.postscript = true;
         print_params.num_columns = 30;
+        // you cannot use autoskip for plain dumps, as the lack of an index
+        // will cause the dump to be irreversable
+        if (res.args.a != 0) {
+            try stdout.writeAll(no_plain_autoskip_msg);
+            try bw.flush();
+            return 1;
+        }
     }
 
     // setting to c import style output also changes other parameters to
     // reasonable values (this can also be overridden)
-    // TODO: Do not allow autoskip for c-include style dumps
     if (res.args.i != 0) {
         print_params.c_style = true;
         print_params.num_columns = 12;
+        // you cannot use autoskip for c-include dumps, as the lack of an index
+        // will cause the dump to be irreversable
+        if (res.args.a != 0) {
+            try stdout.writeAll(no_c_autoskip_msg);
+            try bw.flush();
+            return 1;
+        }
+        // there is no index in c-include mode, so this would do nothing
+        if (res.args.p != 0) {
+            try stdout.writeAll(no_index_msg);
+            try bw.flush();
+            return 1;
+        }
     }
 
     // setting to binary output also changes other parameters to reasonable
@@ -175,9 +213,15 @@ pub fn main() !u8 {
 
     if (res.args.columns) |c| print_params.num_columns = c;
 
-    // TODO: if the user has selected "plain" postscript dump mode, they should
-    //       be warned that also selecting this option does nothing
-    if (res.args.d != 0) print_params.decimal = true;
+    if (res.args.d != 0) {
+        print_params.decimal = true;
+        // there is no index in plain postscript mode, so this would do nothing
+        if (res.args.p != 0) {
+            try stdout.writeAll(no_index_msg);
+            try bw.flush();
+            return 1;
+        }
+    }
 
     if (res.args.e != 0) print_params.little_endian = true;
 
@@ -277,6 +321,11 @@ pub fn main() !u8 {
             &print_params,
             input,
         ) catch |err| switch (err) {
+            error.CannotRevertDumpType => {
+                try stdout.writeAll(incompatible_dump_type_msg);
+                try bw.flush();
+                return 1;
+            },
             error.IndexParseError => {
                 try stdout.writeAll(rev_modes_msg);
                 try bw.flush();

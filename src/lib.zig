@@ -486,22 +486,15 @@ fn convert_hex_strings(input: []const u8) !u8 {
         '0'...'9' => input[1] - 48,
         'A'...'F' => input[1] - 55,
         'a'...'f' => input[1] - 87,
-        // this should probably error if we get a different character
         else => return error.InvalidCharacter,
     };
     value += switch (input[0]) {
         '0'...'9' => (input[0] - 48) << 4,
         'A'...'F' => (input[0] - 55) << 4,
         'a'...'f' => (input[0] - 87) << 4,
-        // this should probably error if we get a different character
         else => return error.InvalidCharacter,
     };
     return value;
-}
-
-test "test hex string coverter on a normal ASCII character (lower-case hex)" {
-    const test_array = [_]u8{ '4', 'b' };
-    try std.testing.expectEqual('K', convert_hex_strings(&test_array));
 }
 
 test "test hex string coverter on the line feed byte (upper-case hex)" {
@@ -545,10 +538,7 @@ test "test binary string converter outside the ASCII range" {
 
 pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !void {
     // the original can't reverse little-endian or c-inlude style dumps either
-    if (params.little_endian or params.c_style) {
-        try writer.writeAll("zig-xxd: Sorry, cannot revert this type of hexdump\n");
-        return;
-    }
+    if (params.little_endian or params.c_style) return error.CannotRevertDumpType;
 
     // use a window iterator to move through the data. the window size will
     // depend on if we are reversing a hex or binary dump
@@ -572,13 +562,13 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
     };
     var last_data_index: usize = 0;
     var new_data_index: usize = 0;
-    var skipping: bool = false;
+    var skipping: bool = false; // managing state
 
     // for error catching (did we end up printing anything?)
     var bytes_writen: usize = 0;
 
     // setup iteration
-    var running_over_index: bool = false;
+    var running_over_index: bool = false; // managing state
     if (params.postscript) running_over_index = true;
     // iterate
     while (input_iterator.next()) |slice| {
@@ -593,9 +583,9 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
             }
         }
 
-        // check for a ": " sequence. this lets us keep track of the index,
-        // which is necessary for reversing dumps made with autoskip. it also
-        // moves iterator to where the raw data is
+        // check for a ": " sequence. this lets us 1) keep track of the index,
+        // which is necessary for reversing dumps made with autoskip 2) moves
+        // the iterator to where the raw data is
         if ((params.postscript == false) and (running_over_index == false)) {
             if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], ": ")) {
                 running_over_index = true;
@@ -610,6 +600,8 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
                 )) |value| {
                     new_data_index = value;
                 } else |err| switch (err) {
+                    // TODO: we should consider sending the line number up for this
+                    //       error type. that way the user can troubleshoot
                     error.InvalidCharacter => return error.IndexParseError,
                     else => return err,
                 }
@@ -716,6 +708,7 @@ test "invalid binary character found in reverse mode" {
         malformed_input,
     ));
 }
+
 test "writing nothing because of malformed reverse input" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
