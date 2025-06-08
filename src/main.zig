@@ -141,12 +141,6 @@ pub fn main() !u8 {
             help_options,
         );
         return 0;
-        // return clap.help(
-        //     std.io.getStdErr().writer(),
-        //     clap.Help,
-        //     &params,
-        //     help_options,
-        // );
     }
 
     var print_params = lib.printParams{};
@@ -227,6 +221,7 @@ pub fn main() !u8 {
             try bw.flush();
             return 1;
         }
+        // TODO: think about error handling here
         try lib.print_output(stdout, &print_params, s);
         try bw.flush();
         return 0;
@@ -247,12 +242,14 @@ pub fn main() !u8 {
                     try bw.flush();
                     return 1;
                 },
-                else => |other_err| return other_err,
+                else => return err,
             };
 
             // define the c sytle import name from the file path if it's not
             // set by the user via the "-n" option
-            if (print_params.c_style_name.len == 0) print_params.c_style_name = positional;
+            if (print_params.c_style_name.len == 0) {
+                print_params.c_style_name = positional;
+            }
 
             // load the whole file into memory in a single allocation
             input = try std.fs.cwd().readFileAlloc(

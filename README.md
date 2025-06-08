@@ -10,15 +10,16 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
 
 ## What differences does this program have over the original `xxd`?
 
-- When using the "plain" postscript output, you can render the data in binary
+- When using the "plain" postscript output, you may render the data in binary
+- You may reverse "plain" postscript dumps of binary and hex data
 - You may use an odd-number of columns in the output, for whatever strange
   reason you may want to do that
-- Speed: this program is about three (3) times faster than `xxd`
+- Speed: this program is between three (3) and six (6) times faster than `xxd`,
+         depending on the options used
 - Size: this program's binary is about five (5) times larger than `xxd`
 
 ## Remaining to-do items
 
- - allow reversing hex dumps back into "normal" files
  - write more tests
  - look into using a different memory allocator for better performance
  - test for memory leaks

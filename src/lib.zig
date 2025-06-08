@@ -647,17 +647,14 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         }
 
         // do the conversion and print the results
-        // TODO: better error handling for bad hex and binary strings
         if (params.binary) {
             if (convert_bin_strings(slice)) |value| {
                 write_buffer = value;
             } else |err| switch (err) {
-                error.InvalidCharacter => {
-                    // TODO: handle this error gracefully
-                    std.debug.print("Bad binary string \"{s}\" at data index {d}", .{ slice, last_data_index });
-                    return err;
-                },
-                else => |other_err| return other_err,
+                // TODO: we should consider sending the line number up for this
+                //       error type. that way the user can troubleshoot
+                error.InvalidCharacter => return err,
+                else => return err,
             }
             try writer.writeByte(write_buffer);
             bytes_writen += 1;
@@ -666,11 +663,9 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
             if (convert_hex_strings(slice)) |value| {
                 write_buffer = value;
             } else |err| switch (err) {
-                error.InvalidCharacter => {
-                    // TODO: handle this error gracefully
-                    std.debug.print("Bad hex string \"{s}\" at data index {d}", .{ slice, last_data_index });
-                    return err;
-                },
+                // TODO: we should consider sending the line number up for this
+                //       error type. that way the user can troubleshoot
+                error.InvalidCharacter => return err,
                 else => |other_err| return other_err,
             }
             try writer.writeByte(write_buffer);
@@ -683,6 +678,44 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
     if (bytes_writen <= 0) return error.NothingWritten;
 }
 
+test "bad index in reverse mode" {
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+    var params = printParams{ .reverse = true };
+    const malformed_input = "0000zxcv: 4c6f  Lo\n";
+
+    try std.testing.expectError(error.IndexParseError, reverse_input(
+        buffer.writer(),
+        &params,
+        malformed_input,
+    ));
+}
+
+test "invalid hex character found in reverse mode" {
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+    var params = printParams{ .reverse = true };
+    const malformed_input = "00000000: 4c6z  L.\n";
+
+    try std.testing.expectError(error.InvalidCharacter, reverse_input(
+        buffer.writer(),
+        &params,
+        malformed_input,
+    ));
+}
+
+test "invalid binary character found in reverse mode" {
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+    var params = printParams{ .reverse = true, .binary = true };
+    const malformed_input = "00000000: 01001100 abcdefgh  L.\n";
+
+    try std.testing.expectError(error.InvalidCharacter, reverse_input(
+        buffer.writer(),
+        &params,
+        malformed_input,
+    ));
+}
 test "writing nothing because of malformed reverse input" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
