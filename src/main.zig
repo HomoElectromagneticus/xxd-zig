@@ -65,10 +65,14 @@ fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
 }
 
 pub fn main() !u8 {
-    // stdout is for the actual output of the application
+    // standard output is for the actual output of the application
     const stdout_file = std.io.getStdOut();
     var bw = std.io.bufferedWriter(stdout_file.writer());
-    const stdout = bw.writer();
+    const stdout_buf = bw.writer();
+
+    // standard error is for any error messages / logging / etc
+    const stderr_file = std.io.getStdErr();
+    const stderr = stderr_file.writer();
 
     // need to allocate memory in order to parse the command-line args, handle
     // buffers, etc
@@ -129,12 +133,10 @@ pub fn main() !u8 {
     }) catch |err| {
         // if the user entered a strange option or argument, let them know
         if (err == error.InvalidArgument) {
-            try stdout.writeAll("Invalid option! Try passing in '-h' for help.\n");
-            try bw.flush();
+            try stderr.writeAll("Invalid option! Try passing in '-h' for help.\n");
             return 1;
         } else if (err == error.InvalidCharacter) {
-            try stdout.writeAll("Invalid option argument! Try passing in '-h' for help.\n");
-            try bw.flush();
+            try stderr.writeAll("Invalid option argument! Try passing in '-h' for help.\n");
             return 1;
         } else {
             // report (semi) useful error and exit
@@ -146,7 +148,7 @@ pub fn main() !u8 {
 
     // if -h or --help is passed in, print usage text, help text, then quit
     if (res.args.help != 0) {
-        try stdout.print("{s}\n", .{usage_notes});
+        try stdout_buf.print("{s}\n", .{usage_notes});
         try bw.flush();
         const help_options = clap.HelpOptions{
             .description_on_new_line = false,
@@ -175,8 +177,7 @@ pub fn main() !u8 {
         // you cannot use autoskip for plain dumps, as the lack of an index
         // will cause the dump to be irreversable
         if (res.args.a != 0) {
-            try stdout.writeAll(no_plain_autoskip_msg);
-            try bw.flush();
+            try stderr.writeAll(no_plain_autoskip_msg);
             return 1;
         }
     }
@@ -189,14 +190,12 @@ pub fn main() !u8 {
         // you cannot use autoskip for c-include dumps, as the lack of an index
         // will cause the dump to be irreversable
         if (res.args.a != 0) {
-            try stdout.writeAll(no_c_autoskip_msg);
-            try bw.flush();
+            try stderr.writeAll(no_c_autoskip_msg);
             return 1;
         }
         // there is no index in c-include mode, so this would do nothing
         if (res.args.p != 0) {
-            try stdout.writeAll(no_index_msg);
-            try bw.flush();
+            try stderr.writeAll(no_index_msg);
             return 1;
         }
     }
@@ -217,8 +216,7 @@ pub fn main() !u8 {
         print_params.decimal = true;
         // there is no index in plain postscript mode, so this would do nothing
         if (res.args.p != 0) {
-            try stdout.writeAll(no_index_msg);
-            try bw.flush();
+            try stderr.writeAll(no_index_msg);
             return 1;
         }
     }
@@ -261,12 +259,11 @@ pub fn main() !u8 {
         // reverse mode for an input string is not allowed. this is kind of a
         // nonsensical use case
         if (print_params.reverse) {
-            try stdout.writeAll(rev_input_string_msg);
-            try bw.flush();
+            try stderr.writeAll(rev_input_string_msg);
             return 1;
         }
         // TODO: think about error handling here
-        try lib.print_output(stdout, &print_params, s);
+        try lib.print_output(stdout_buf, &print_params, s);
         try bw.flush();
         return 0;
     }
@@ -282,9 +279,8 @@ pub fn main() !u8 {
                 &path_buffer,
             ) catch |err| switch (err) {
                 error.FileNotFound => {
-                    try stdout.print("Error: File \'{s}\' not found!\n", .{positional});
-                    try bw.flush();
-                    return 1;
+                    try stderr.print("Error: File \'{s}\' not found!\n", .{positional});
+                    return 2;
                 },
                 else => return err,
             };
@@ -314,38 +310,25 @@ pub fn main() !u8 {
     };
     defer gpa.allocator().free(input);
 
-    // print the output depending on if we are in normal or reverse mode
     if (print_params.reverse) {
         lib.reverse_input(
-            stdout,
+            stdout_buf,
             &print_params,
             input,
-        ) catch |err| switch (err) {
-            error.CannotRevertDumpType => {
-                try stdout.writeAll(incompatible_dump_type_msg);
-                try bw.flush();
-                return 1;
-            },
-            error.IndexParseError => {
-                try stdout.writeAll(rev_modes_msg);
-                try bw.flush();
-                return 1;
-            },
-            error.InvalidCharacter => {
-                try stdout.writeAll(rev_invalid_char_msg);
-                try bw.flush();
-                return 1;
-            },
-            error.NothingWritten => {
-                try stdout.writeAll(rev_nothing_printed_msg);
-                try bw.flush();
-                return 1;
-            },
-            else => return err,
+        ) catch |err| {
+            try bw.flush();
+            try stderr.writeAll(switch (err) {
+                error.CannotRevertDumpType => incompatible_dump_type_msg,
+                error.IndexParseError => rev_modes_msg,
+                error.InvalidCharacter => rev_invalid_char_msg,
+                error.NothingWritten => rev_nothing_printed_msg,
+                else => return err,
+            });
+            return 1;
         };
     } else {
         // TODO: think about error handling here
-        try lib.print_output(stdout, &print_params, input);
+        try lib.print_output(stdout_buf, &print_params, input);
     }
     try bw.flush(); // don't forget to flush!
     return 0;
