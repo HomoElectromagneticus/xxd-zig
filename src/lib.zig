@@ -537,9 +537,6 @@ test "test binary string converter outside the ASCII range" {
 }
 
 pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !void {
-    // the original can't reverse little-endian or c-inlude style dumps either
-    if (params.little_endian or params.c_style) return error.CannotRevertDumpType;
-
     // use a window iterator to move through the data. the window size will
     // depend on if we are reversing a hex or binary dump
     const window_size: u8 = switch (params.binary) {

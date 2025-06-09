@@ -70,13 +70,13 @@ pub fn main() !u8 {
     var bw = std.io.bufferedWriter(stdout_file.writer());
     const stdout_buf = bw.writer();
 
-    // standard error is for any error messages / logging / etc
+    // standard error is for any error messages / logs / etc (no buffer needed)
     const stderr_file = std.io.getStdErr();
     const stderr = stderr_file.writer();
 
     // need to allocate memory in order to parse the command-line args, handle
     // buffers, etc
-    // TODO: think about using a different allocator here
+    // TODO: think about using a different allocator here for performance
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
@@ -239,7 +239,14 @@ pub fn main() !u8 {
         print_params.colorize = false;
     }
 
-    if (res.args.r != 0) print_params.reverse = true;
+    if (res.args.r != 0) {
+        // the original can't reverse little-endian or c-inlude style dumps either
+        if (print_params.little_endian or print_params.c_style) {
+            try stderr.writeAll(incompatible_dump_type_msg);
+            return 1;
+        }
+        print_params.reverse = true;
+    }
 
     // the printed line length - useful for ensuring nice text alignment
     if (print_params.binary == false) {
@@ -279,8 +286,8 @@ pub fn main() !u8 {
                 &path_buffer,
             ) catch |err| switch (err) {
                 error.FileNotFound => {
-                    try stderr.print("Error: File \'{s}\' not found!\n", .{positional});
-                    return 2;
+                    try stderr.print("xxd-zig error: File \"{s}\" not found!\n", .{positional});
+                    return 1;
                 },
                 else => return err,
             };
@@ -292,11 +299,17 @@ pub fn main() !u8 {
             }
 
             // load the whole file into memory in a single allocation
-            input = try std.fs.cwd().readFileAlloc(
+            input = std.fs.cwd().readFileAlloc(
                 gpa.allocator(),
                 path,
                 std.math.maxInt(usize),
-            );
+            ) catch |err| switch (err) {
+                error.AccessDenied => {
+                    try stderr.print("xxd-zig error: Access to \"{s}\" denied\n", .{positional});
+                    return 1;
+                },
+                else => return err,
+            };
         } else { //from stdin
             // get a buffered reader
             const stdin_file = std.io.getStdIn();
@@ -316,9 +329,8 @@ pub fn main() !u8 {
             &print_params,
             input,
         ) catch |err| {
-            try bw.flush();
+            try bw.flush(); // flush stdout before writing to stderr
             try stderr.writeAll(switch (err) {
-                error.CannotRevertDumpType => incompatible_dump_type_msg,
                 error.IndexParseError => rev_modes_msg,
                 error.InvalidCharacter => rev_invalid_char_msg,
                 error.NothingWritten => rev_nothing_printed_msg,
