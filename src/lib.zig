@@ -4,6 +4,7 @@ const Color = enum {
     green,
     yellow,
     white,
+    red,
 };
 
 pub const printParams = struct {
@@ -100,12 +101,16 @@ test "confirm binary string LUT is correct for 0xff" {
 
 // colorize the terminal output
 fn colorize(writer: anytype, color: Color) !void {
-    //                                              bold ---\   green --\
-    if (color == Color.green) try writer.writeAll("\u{001b}[1m\u{001b}[32m");
-    //                                              bold ----\  yellow --\
-    if (color == Color.yellow) try writer.writeAll("\u{001b}[1m\u{001b}[33m");
-    //                                              bold ----\  white --\
-    if (color == Color.white) try writer.writeAll("\u{001b}[1m\u{001b}[37m");
+    switch (color) {
+        //                                   bold ----\  green --\
+        Color.green => try writer.writeAll("\u{001b}[1m\u{001b}[32m"),
+        //                                   bold -----\ yellow --\
+        Color.yellow => try writer.writeAll("\u{001b}[1m\u{001b}[33m"),
+        //                                   bold ----\  white --\
+        Color.white => try writer.writeAll("\u{001b}[1m\u{001b}[37m"),
+        //                                   bold --\    red --\
+        Color.red => try writer.writeAll("\u{001b}[1m\u{001b}[31m"),
+    }
 }
 
 // tell the terminal to go back to standard color
@@ -153,7 +158,9 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
                         0 => try colorize(writer, Color.white),
                         // printable ASCII characters should be green
                         32...126 => try colorize(writer, Color.green),
-                        // non-printable ASCII should be yellow
+                        // values over 0x7F should be red
+                        127...255 => try colorize(writer, Color.red),
+                        // everything else should be yellow
                         else => try colorize(writer, Color.yellow),
                     }
                 }
@@ -179,7 +186,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
             try writer.writeAll(" ");
         }
     }
-    // add an extra space to copy xxd
+    // add an extra space to copy xxd (also helps decoding reverse dumps)
     try writer.writeAll(" ");
     return input.len;
 }
@@ -250,6 +257,7 @@ fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
             switch (raw_char) {
                 0 => try colorize(writer, Color.white),
                 32...126 => try colorize(writer, Color.green),
+                127...255 => try colorize(writer, Color.red),
                 else => try colorize(writer, Color.yellow),
             }
         }

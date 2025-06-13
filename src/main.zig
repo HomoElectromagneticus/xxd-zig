@@ -77,8 +77,8 @@ pub fn main() !u8 {
     // need to allocate memory in order to parse the command-line args, handle
     // buffers, etc
     // TODO: think about using a different allocator here for performance
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    var da = std.heap.DebugAllocator(.{}){};
+    defer _ = da.deinit();
 
     // usage notes that will get printed with the help text
     const usage_notes =
@@ -129,7 +129,7 @@ pub fn main() !u8 {
     // parse the command-line arguments
     const res = clap.parse(clap.Help, &params, parsers, .{
         .diagnostic = &diag,
-        .allocator = gpa.allocator(),
+        .allocator = da.allocator(),
     }) catch |err| {
         // if the user entered a strange option or argument, let them know
         if (err == error.InvalidArgument) {
@@ -235,6 +235,7 @@ pub fn main() !u8 {
 
     if (res.args.u != 0) print_params.upper_case = true;
 
+    // turn off colorize if the user chooses, or if the output is not a terminal
     if ((res.args.R != 0) or !(std.fs.File.isTty(stdout_file))) {
         print_params.colorize = false;
     }
@@ -286,7 +287,7 @@ pub fn main() !u8 {
                 &path_buffer,
             ) catch |err| switch (err) {
                 error.FileNotFound => {
-                    try stderr.print("xxd-zig error: File \"{s}\" not found!\n", .{positional});
+                    try stderr.print("xxd-zig: File \"{s}\" not found!\n", .{positional});
                     return 1;
                 },
                 else => return err,
@@ -300,12 +301,12 @@ pub fn main() !u8 {
 
             // load the whole file into memory in a single allocation
             input = std.fs.cwd().readFileAlloc(
-                gpa.allocator(),
+                da.allocator(),
                 path,
                 std.math.maxInt(usize),
             ) catch |err| switch (err) {
                 error.AccessDenied => {
-                    try stderr.print("xxd-zig error: Access to \"{s}\" denied\n", .{positional});
+                    try stderr.print("xxd-zig: Access to \"{s}\" denied!\n", .{positional});
                     return 1;
                 },
                 else => return err,
@@ -317,11 +318,11 @@ pub fn main() !u8 {
             const stdin = br.reader();
 
             // allocate memory to read from standard input
-            input = try stdin.readAllAlloc(gpa.allocator(), std.math.maxInt(usize));
+            input = try stdin.readAllAlloc(da.allocator(), std.math.maxInt(usize));
         }
         break :blk input;
     };
-    defer gpa.allocator().free(input);
+    defer da.allocator().free(input);
 
     if (print_params.reverse) {
         lib.reverse_input(
