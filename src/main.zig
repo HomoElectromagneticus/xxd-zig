@@ -75,9 +75,8 @@ pub fn main() !u8 {
 
     // need to allocate memory in order to parse the command-line args, handle
     // buffers, etc
-    // TODO: think about using a different allocator here for performance
-    var da = std.heap.DebugAllocator(.{}){};
-    defer _ = da.deinit();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
 
     // usage notes that will get printed with the help text
     const usage_notes =
@@ -107,7 +106,7 @@ pub fn main() !u8 {
         \\-n <STR>                Set the variable name for C include file style (-i) 
         \\-o, --offset <INT>      Add an offset to the displayed file position
         \\-p                      Plain dump, no formatting
-        \\-r                      Reverse operation: convert dump into binary
+        \\-r                      Reverse mode: convert dump into binary
         \\-s, --seek <INT>        Start at <INT> bytes absolute
         \\    --string <STR>      Optional input string (ignores FILENAME and stdin)
         \\-u                      Use upper-case hex letters, default is lower
@@ -128,7 +127,7 @@ pub fn main() !u8 {
     // parse the command-line arguments
     const res = clap.parse(clap.Help, &params, parsers, .{
         .diagnostic = &clap_diag,
-        .allocator = da.allocator(),
+        .allocator = arena.allocator(),
     }) catch |err| {
         // if the user entered a strange option or argument, let them know
         if (err == error.InvalidArgument) {
@@ -143,7 +142,6 @@ pub fn main() !u8 {
             return err;
         }
     };
-    defer res.deinit();
 
     // if -h or --help is passed in, print usage text, help text, then quit
     if (res.args.help != 0) {
@@ -304,7 +302,7 @@ pub fn main() !u8 {
 
             // load the whole file into memory in a single allocation
             input = std.fs.cwd().readFileAlloc(
-                da.allocator(),
+                arena.allocator(),
                 path,
                 std.math.maxInt(usize),
             ) catch |err| switch (err) {
@@ -321,11 +319,13 @@ pub fn main() !u8 {
             const stdin = br.reader();
 
             // allocate memory to read from standard input
-            input = try stdin.readAllAlloc(da.allocator(), std.math.maxInt(usize));
+            input = try stdin.readAllAlloc(
+                arena.allocator(),
+                std.math.maxInt(usize),
+            );
         }
         break :blk input;
     };
-    defer da.allocator().free(input);
 
     if (print_params.reverse) {
         lib.reverse_input(
