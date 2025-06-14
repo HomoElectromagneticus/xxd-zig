@@ -17,13 +17,14 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
 - Speed: this program is between three (3) and six (6) times faster than `xxd`,
          depending on the options used
 - Size: this program's binary is about five (5) times larger than `xxd`
+- Improved error handling and messaging in reverse mode
 
 ## Remaining to-do items
 
  - write more tests
  - look into using a different memory allocator for better performance
  - test for memory leaks
- - improve error handling
+ - further improve error handling
  - choose a better name - "xzd" ?
 
 ## Usage
