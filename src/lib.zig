@@ -1,5 +1,9 @@
 const std = @import("std");
 
+pub const Diagnostic = struct {
+    line_number: usize = undefined,
+};
+
 const Color = enum {
     green,
     yellow,
@@ -544,7 +548,7 @@ test "test binary string converter outside the ASCII range" {
     try std.testing.expectEqual(0xff, convert_bin_strings(test_string));
 }
 
-pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !void {
+pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8, diagnostic: *Diagnostic) !void {
     // use a window iterator to move through the data. the window size will
     // depend on if we are reversing a hex or binary dump
     const window_size: u8 = switch (params.binary) {
@@ -569,8 +573,9 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
     var new_data_index: usize = 0;
     var skipping: bool = false; // managing state
 
-    // for error catching (did we end up printing anything?)
+    // for error catching / handling
     var bytes_writen: usize = 0;
+    diagnostic.line_number = 1;
 
     // setup iteration
     var running_over_index: bool = false; // managing state
@@ -584,6 +589,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
             if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "\n*")) {
                 skipping = true;
                 last_newline += 2;
+                diagnostic.line_number += 1;
                 continue;
             }
         }
@@ -598,6 +604,11 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
                 // keep track of where we are in the data (needed for autoskip)
                 if (input_iterator.index) |idx| last_colon = idx;
                 last_data_index = new_data_index;
+                // the indexes can get out of order (small is bigger than large)
+                // if the incorrect reverse mode (hex vs binary) is set
+                if (last_newline > (last_colon - 1)) {
+                    return error.DumpParseError;
+                }
                 if (std.fmt.parseUnsigned(
                     usize,
                     input[last_newline..(last_colon - 1)],
@@ -605,9 +616,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
                 )) |value| {
                     new_data_index = value;
                 } else |err| switch (err) {
-                    // TODO: we should consider sending the line number up for this
-                    //       error type. that way the user can troubleshoot
-                    error.InvalidCharacter => return error.IndexParseError,
+                    error.InvalidCharacter => return error.DumpParseError,
                     else => return err,
                 }
 
@@ -629,7 +638,10 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         // in xxd (and this version of xxd), a regular dump is separated from
         // the ASCII representation by two spaces. this gives us a hint!
         if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "  ")) {
-            if (input_iterator.index) |idx| last_newline = idx + params.num_columns + 2;
+            if (input_iterator.index) |idx| {
+                last_newline = idx + params.num_columns + 2;
+                diagnostic.line_number += 1;
+            }
             // skip over the ASCII data
             for (0..params.num_columns) |_| _ = input_iterator.next();
             running_over_index = false;
@@ -639,7 +651,10 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
         if (slice[0] == ' ') continue; // handle arbitrary byte groupings
 
         if (slice[0] == '\n') {
-            if (input_iterator.index) |idx| last_newline = idx;
+            if (input_iterator.index) |idx| {
+                last_newline = idx;
+                diagnostic.line_number += 1;
+            }
             continue;
         }
 
@@ -648,8 +663,6 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
             if (convert_bin_strings(slice)) |value| {
                 write_buffer = value;
             } else |err| switch (err) {
-                // TODO: we should consider sending the line number up for this
-                //       error type. that way the user can troubleshoot
                 error.InvalidCharacter => return err,
                 else => return err,
             }
@@ -660,8 +673,6 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8) !
             if (convert_hex_strings(slice)) |value| {
                 write_buffer = value;
             } else |err| switch (err) {
-                // TODO: we should consider sending the line number up for this
-                //       error type. that way the user can troubleshoot
                 error.InvalidCharacter => return err,
                 else => |other_err| return other_err,
             }
@@ -679,12 +690,14 @@ test "bad index in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
     var params = printParams{ .reverse = true };
+    var diag = Diagnostic{};
     const malformed_input = "0000zxcv: 4c6f  Lo\n";
 
-    try std.testing.expectError(error.IndexParseError, reverse_input(
+    try std.testing.expectError(error.DumpParseError, reverse_input(
         buffer.writer(),
         &params,
         malformed_input,
+        &diag,
     ));
 }
 
@@ -692,12 +705,14 @@ test "invalid hex character found in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
     var params = printParams{ .reverse = true };
+    var diag = Diagnostic{};
     const malformed_input = "00000000: 4c6z  L.\n";
 
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
         malformed_input,
+        &diag,
     ));
 }
 
@@ -705,12 +720,14 @@ test "invalid binary character found in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
     var params = printParams{ .reverse = true, .binary = true };
+    var diag = Diagnostic{};
     const malformed_input = "00000000: 01001100 abcdefgh  L.\n";
 
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
         malformed_input,
+        &diag,
     ));
 }
 
@@ -718,11 +735,13 @@ test "writing nothing because of malformed reverse input" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
     var params = printParams{ .reverse = true };
+    var diag = Diagnostic{};
     const malformed_input = "ghijklmnopqrstuv.$";
 
     try std.testing.expectError(error.NothingWritten, reverse_input(
         buffer.writer(),
         &params,
         malformed_input,
+        &diag,
     ));
 }

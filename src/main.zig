@@ -4,10 +4,11 @@ const lib = @import("lib.zig");
 
 const rev_modes_msg =
     \\
-    \\xxd-zig: Error while parsing the index in reverse mode! This could be
+    \\xxd-zig: Error while parsing the dump in reverse mode! This could be
     \\         because the hex dump was done in "plain" postscript mode or
     \\         with "autoskip" enabled and the corresponding arguments
     \\         (-p and -a, respectively) were not passed in while reversing.
+    \\         You may also try changing the hex / bin mode.
     \\
 ;
 
@@ -125,10 +126,10 @@ pub fn main() !u8 {
     };
 
     // initialize the clap diagnostics, used for reporting errors. is optional
-    var diag = clap.Diagnostic{};
+    var clap_diag = clap.Diagnostic{};
     // parse the command-line arguments
     const res = clap.parse(clap.Help, &params, parsers, .{
-        .diagnostic = &diag,
+        .diagnostic = &clap_diag,
         .allocator = da.allocator(),
     }) catch |err| {
         // if the user entered a strange option or argument, let them know
@@ -140,7 +141,7 @@ pub fn main() !u8 {
             return 1;
         } else {
             // report (semi) useful error and exit
-            try diag.report(std.io.getStdErr().writer(), err);
+            try clap_diag.report(std.io.getStdErr().writer(), err);
             return err;
         }
     };
@@ -262,6 +263,10 @@ pub fn main() !u8 {
         }
     }
 
+    // initialize the diagnostic (for telling the user where in the source data
+    // the program ran into errors)
+    var diag = lib.Diagnostic{};
+
     // handle the special case of the string input
     if (res.args.string) |s| {
         // reverse mode for an input string is not allowed. this is kind of a
@@ -329,14 +334,21 @@ pub fn main() !u8 {
             stdout_buf,
             &print_params,
             input,
+            &diag,
         ) catch |err| {
             try bw.flush(); // flush stdout before writing to stderr
-            try stderr.writeAll(switch (err) {
-                error.IndexParseError => rev_modes_msg,
-                error.InvalidCharacter => rev_invalid_char_msg,
-                error.NothingWritten => rev_nothing_printed_msg,
+            switch (err) {
+                error.DumpParseError => {
+                    try stderr.print("\nxxd-zig: Parsing error at line {d}.", .{diag.line_number});
+                    try stderr.writeAll(rev_modes_msg);
+                },
+                error.InvalidCharacter => {
+                    try stderr.print("\nxxd-zig: Invalid character on line {d}.", .{diag.line_number});
+                    try stderr.writeAll(rev_invalid_char_msg);
+                },
+                error.NothingWritten => try stderr.writeAll(rev_nothing_printed_msg),
                 else => return err,
-            });
+            }
             return 1;
         };
     } else {
