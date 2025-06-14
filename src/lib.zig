@@ -548,9 +548,14 @@ test "test binary string converter outside the ASCII range" {
     try std.testing.expectEqual(0xff, convert_bin_strings(test_string));
 }
 
-pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8, diagnostic: *Diagnostic) !void {
-    // use a window iterator to move through the data. the window size will
-    // depend on if we are reversing a hex or binary dump
+pub fn reverse_input(
+    writer: anytype,
+    params: *printParams,
+    input: []const u8,
+    diagnostic: *Diagnostic,
+) !void {
+    // use a window iterator to move through the data, where the window size
+    // depends on if we are reversing a hex or binary dump
     const window_size: u8 = switch (params.binary) {
         true => 8,
         false => 2,
@@ -594,9 +599,9 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8, d
             }
         }
 
-        // check for a ": " sequence. this lets us 1) keep track of the index,
-        // which is necessary for reversing dumps made with autoskip 2) moves
-        // the iterator to where the raw data is
+        // check for a ": " sequence. this lets us:
+        // 1) keep track of the index, necessary for reversing dumps w/ autoskip
+        // 2) moves the iterator to where the raw data is
         if ((params.postscript == false) and (running_over_index == false)) {
             if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], ": ")) {
                 running_over_index = true;
@@ -642,7 +647,7 @@ pub fn reverse_input(writer: anytype, params: *printParams, input: []const u8, d
                 last_newline = idx + params.num_columns + 2;
                 diagnostic.line_number += 1;
             }
-            // skip over the ASCII data
+            // skip over the ASCII representation
             for (0..params.num_columns) |_| _ = input_iterator.next();
             running_over_index = false;
             continue;

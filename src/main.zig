@@ -5,10 +5,8 @@ const lib = @import("lib.zig");
 const rev_modes_msg =
     \\
     \\xxd-zig: Error while parsing the dump in reverse mode! This could be
-    \\         because the hex dump was done in "plain" postscript mode or
-    \\         with "autoskip" enabled and the corresponding arguments
-    \\         (-p and -a, respectively) were not passed in while reversing.
-    \\         You may also try changing the hex / bin mode.
+    \\         because the arguments used to make the dump do not match those
+    \\         used to reverse the dump (-b for binary, -a for autoskip, etc).
     \\
 ;
 
@@ -20,8 +18,8 @@ const rev_invalid_char_msg =
 
 const rev_nothing_printed_msg =
     \\xxd-zig: Nothing was printed while running in reverse mode! This
-    \\         could be caused by incorrectly set options. Try passing
-    \\         in -h for for help.
+    \\         could be because you chose the wrong options for the data. Try
+    \\         passing in -h for for help.
     \\
 ;
 
