@@ -22,7 +22,8 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
 ## Remaining to-do items
 
  - write more tests
- - further improve error handling
+ - use a buffered reader for reading in files instead of loading the entire
+   input file into memory
  - choose a better name - "xzd" or "zxd" ?
 
 ## Usage

@@ -123,8 +123,8 @@ fn uncolor(writer: anytype) !void {
 }
 
 fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usize {
-    // number of printed characters of translated input (not including the
-    // index markers on the left!)
+    // number of printed characters of dumped input (not including the index
+    // markers on the left!)
     var num_printed_chars: usize = 0;
     // number of spaces for lining up the ascii characters in the final row
     var num_spaces: usize = 0;
@@ -138,8 +138,8 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
     );
 
     while (groups_iterator.next()) |group| {
-        // if the last group for a little-endian dump is not full, add
-        // extra spaces for perfect alignment
+        // if the last group for a little-endian dump is not full, add extra
+        // spaces for perfect alignment
         if ((params.little_endian) and (group.len < params.group_size)) {
             const delta: usize = 2 * (params.group_size - group.len);
             for (0..delta) |_| {
@@ -186,9 +186,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
         // size, we need an extra space or the ASCII won't line up right
         if (params.num_columns % params.group_size != 0) num_spaces += 1;
 
-        for (0..num_spaces) |_| {
-            try writer.writeAll(" ");
-        }
+        for (0..num_spaces) |_| try writer.writeAll(" ");
     }
     // add an extra space to copy xxd (also helps decoding reverse dumps)
     try writer.writeAll(" ");
@@ -474,7 +472,6 @@ pub fn print_output(writer: anytype, params: *printParams, input: []const u8) !v
             continue;
         }
 
-        // TODO: is there a faster way to do this?
         // print the file position in hex (default) or decimal
         if (params.decimal) {
             try writer.print("{d:0>8}: ", .{file_pos});

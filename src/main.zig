@@ -271,8 +271,15 @@ pub fn main() !u8 {
             try stderr.writeAll(rev_input_string_msg);
             return 1;
         }
-        // TODO: think about error handling here
-        try lib.print_output(stdout_buf, &print_params, s);
+
+        lib.print_output(
+            stdout_buf,
+            &print_params,
+            s,
+        ) catch |err| {
+            try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
+            return 1;
+        };
         try bw.flush();
         return 0;
     }
@@ -286,12 +293,16 @@ pub fn main() !u8 {
             const path: []u8 = std.fs.realpath(
                 positional,
                 &path_buffer,
-            ) catch |err| switch (err) {
-                error.FileNotFound => {
-                    try stderr.print("xxd-zig: File \"{s}\" not found!\n", .{positional});
-                    return 1;
-                },
-                else => return err,
+            ) catch |err| {
+                switch (err) {
+                    error.FileNotFound => {
+                        try stderr.print("xxd-zig: File \"{s}\" not found!\n", .{positional});
+                    },
+                    else => {
+                        try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
+                    },
+                }
+                return 1;
             };
 
             // define the c sytle import name from the file path if it's not
@@ -301,16 +312,24 @@ pub fn main() !u8 {
             }
 
             // load the whole file into memory in a single allocation
+            // TODO: use a buffered reader so there is no limit on file size
             input = std.fs.cwd().readFileAlloc(
                 arena.allocator(),
                 path,
                 std.math.maxInt(usize),
-            ) catch |err| switch (err) {
-                error.AccessDenied => {
-                    try stderr.print("xxd-zig: Access to \"{s}\" denied!\n", .{positional});
-                    return 1;
-                },
-                else => return err,
+            ) catch |err| {
+                switch (err) {
+                    error.AccessDenied => {
+                        try stderr.print("xxd-zig: Access to \"{s}\" denied!\n", .{positional});
+                    },
+                    error.FileTooBig => {
+                        try stderr.print("xxd-zig: File \"{s}\" is too big to be read! Upper limit is {d} bytes.\n", .{ positional, std.math.maxInt(usize) });
+                    },
+                    else => {
+                        try stderr.print("xxd-zig: Error allocating memory - {s}\n", .{@errorName(err)});
+                    },
+                }
+                return 1;
             };
         } else { //from stdin
             // get a buffered reader
@@ -319,10 +338,13 @@ pub fn main() !u8 {
             const stdin = br.reader();
 
             // allocate memory to read from standard input
-            input = try stdin.readAllAlloc(
+            input = stdin.readAllAlloc(
                 arena.allocator(),
                 std.math.maxInt(usize),
-            );
+            ) catch |err| {
+                try stderr.print("xxd-zig: Error allocating memory - {s}\n", .{@errorName(err)});
+                return 1;
+            };
         }
         break :blk input;
     };
@@ -334,24 +356,34 @@ pub fn main() !u8 {
             input,
             &diag,
         ) catch |err| {
-            try bw.flush(); // flush stdout before writing to stderr
             switch (err) {
                 error.DumpParseError => {
+                    try bw.flush(); // flush stdout before writing to stderr
                     try stderr.print("\nxxd-zig: Parsing error at line {d}.", .{diag.line_number});
                     try stderr.writeAll(rev_modes_msg);
                 },
                 error.InvalidCharacter => {
+                    try bw.flush(); // flush stdout before writing to stderr
                     try stderr.print("\nxxd-zig: Invalid character on line {d}.", .{diag.line_number});
                     try stderr.writeAll(rev_invalid_char_msg);
                 },
-                error.NothingWritten => try stderr.writeAll(rev_nothing_printed_msg),
-                else => return err,
+                error.NothingWritten => {
+                    try bw.flush(); // flush stdout before writing to stderr
+                    try stderr.writeAll(rev_nothing_printed_msg);
+                },
+                else => try stderr.print("xxd-zig: Error reversing dump - {s}\n", .{@errorName(err)}),
             }
             return 1;
         };
     } else {
-        // TODO: think about error handling here
-        try lib.print_output(stdout_buf, &print_params, input);
+        lib.print_output(
+            stdout_buf,
+            &print_params,
+            input,
+        ) catch |err| {
+            try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
+            return 1;
+        };
     }
     try bw.flush(); // don't forget to flush!
     return 0;
