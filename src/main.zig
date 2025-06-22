@@ -164,6 +164,9 @@ pub fn main() !u8 {
 
     var print_params = lib.printParams{};
 
+    // get the system page size to know how much to read at a time of the input
+    print_params.page_size = std.heap.pageSize();
+
     if (res.args.a != 0) print_params.autoskip = true;
 
     // setting the mode to plain dump (called postscript in the original xxd)
@@ -264,35 +267,40 @@ pub fn main() !u8 {
     var diag = lib.Diagnostic{};
 
     // handle the special case of the string input
-    if (res.args.string) |s| {
-        // reverse mode for an input string is not allowed. this is kind of a
-        // nonsensical use case
-        if (print_params.reverse) {
-            try stderr.writeAll(rev_input_string_msg);
-            return 1;
-        }
+    // if (res.args.string) |s| {
+    //     // reverse mode for an input string is not allowed. this is kind of a
+    //     // nonsensical use case
+    //     if (print_params.reverse) {
+    //         try stderr.writeAll(rev_input_string_msg);
+    //         return 1;
+    //     }
 
-        lib.print_output(
-            stdout_buf,
-            &print_params,
-            s,
-        ) catch |err| {
-            try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
-            return 1;
-        };
-        try bw.flush();
-        return 0;
-    }
+    //     lib.print_output(
+    //         stdout_buf,
+    //         &print_params,
+    //         s,
+    //     ) catch |err| {
+    //         try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
+    //         return 1;
+    //     };
+    //     try bw.flush();
+    //     return 0;
+    // }
 
-    // allocate memory for input from stdin or a file
-    const input = blk: {
-        var input: []u8 = undefined;
+    // get a reader to the input (stdin or a file)
+    const reader = blk: {
         if (res.positionals[0]) |positional| { //from an input file
-            // interpret the filepath
-            var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-            const path: []u8 = std.fs.realpath(
+            // define the c sytle import name from the file path if it's not
+            // set by the user via the "-n" option
+            if (print_params.c_style_name.len == 0) {
+                print_params.c_style_name = positional;
+            }
+
+            // get a reader to the input file (we are buffering ourselves, so
+            // there is no need to get a buffered reader)
+            var file = std.fs.cwd().openFile(
                 positional,
-                &path_buffer,
+                .{ .mode = .read_only },
             ) catch |err| {
                 switch (err) {
                     error.FileNotFound => {
@@ -304,56 +312,25 @@ pub fn main() !u8 {
                 }
                 return 1;
             };
-
-            // define the c sytle import name from the file path if it's not
-            // set by the user via the "-n" option
-            if (print_params.c_style_name.len == 0) {
-                print_params.c_style_name = positional;
-            }
-
-            // load the whole file into memory in a single allocation
-            // TODO: use a buffered reader so there is no limit on file size
-            input = std.fs.cwd().readFileAlloc(
-                arena.allocator(),
-                path,
-                std.math.maxInt(usize),
-            ) catch |err| {
-                switch (err) {
-                    error.AccessDenied => {
-                        try stderr.print("xxd-zig: Access to \"{s}\" denied!\n", .{positional});
-                    },
-                    error.FileTooBig => {
-                        try stderr.print("xxd-zig: File \"{s}\" is too big to be read! Upper limit is {d} bytes.\n", .{ positional, std.math.maxInt(usize) });
-                    },
-                    else => {
-                        try stderr.print("xxd-zig: Error allocating memory - {s}\n", .{@errorName(err)});
-                    },
-                }
-                return 1;
-            };
+            defer file.close();
+            break :blk file.reader();
         } else { //from stdin
-            // get a buffered reader
+            // get a reader
             const stdin_file = std.io.getStdIn();
-            var br = std.io.bufferedReader(stdin_file.reader());
-            const stdin = br.reader();
-
-            // allocate memory to read from standard input
-            input = stdin.readAllAlloc(
-                arena.allocator(),
-                std.math.maxInt(usize),
-            ) catch |err| {
-                try stderr.print("xxd-zig: Error allocating memory - {s}\n", .{@errorName(err)});
-                return 1;
-            };
+            break :blk stdin_file.reader();
         }
-        break :blk input;
     };
+
+    // allocate memory for the input buffer
+    var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
+    _ = try input_buffer.addManyAsSlice(arena.allocator(), (print_params.page_size + print_params.num_columns - 1));
 
     if (print_params.reverse) {
         lib.reverse_input(
             stdout_buf,
             &print_params,
-            input,
+            input_buffer,
+            reader,
             &diag,
         ) catch |err| {
             switch (err) {
@@ -379,7 +356,8 @@ pub fn main() !u8 {
         lib.print_output(
             stdout_buf,
             &print_params,
-            input,
+            input_buffer,
+            reader,
         ) catch |err| {
             try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
             return 1;
