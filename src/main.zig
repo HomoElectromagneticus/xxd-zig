@@ -287,24 +287,22 @@ pub fn main() !u8 {
     //     return 0;
     // }
 
-    // get a reader to the input (stdin or a file)
-    const reader = blk: {
-        if (res.positionals[0]) |positional| { //from an input file
+    // get a file handle to the input (stdin or a file)
+    const file = blk: {
+        if (res.positionals[0]) |path_string| {
             // define the c sytle import name from the file path if it's not
             // set by the user via the "-n" option
             if (print_params.c_style_name.len == 0) {
-                print_params.c_style_name = positional;
+                print_params.c_style_name = path_string;
             }
-
-            // get a reader to the input file (we are buffering ourselves, so
-            // there is no need to get a buffered reader)
-            var file = std.fs.cwd().openFile(
-                positional,
+            // get the file
+            const file = std.fs.cwd().openFile(
+                path_string,
                 .{ .mode = .read_only },
             ) catch |err| {
                 switch (err) {
                     error.FileNotFound => {
-                        try stderr.print("xxd-zig: File \"{s}\" not found!\n", .{positional});
+                        try stderr.print("xxd-zig: File \"{s}\" not found!\n", .{path_string});
                     },
                     else => {
                         try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
@@ -312,14 +310,15 @@ pub fn main() !u8 {
                 }
                 return 1;
             };
-            defer file.close();
-            break :blk file.reader();
-        } else { //from stdin
-            // get a reader
-            const stdin_file = std.io.getStdIn();
-            break :blk stdin_file.reader();
+            break :blk file;
+        } else {
+            const file = std.io.getStdIn();
+            break :blk file;
         }
     };
+    // get a reader to the file and make sure the file closes at the end
+    const reader = file.reader();
+    defer file.close();
 
     // allocate memory for the input buffer
     var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
