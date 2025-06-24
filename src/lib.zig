@@ -631,8 +631,8 @@ pub fn reverse_input(
         '\n',
         params.page_size,
     );
-    // we can now determine the file's line length from what's in the buffer
-    const line_length = input_buffer.items.len;
+    // we determine the file's "normal" line length based on what's in the buffer
+    const normal_line_length = input_buffer.items.len;
     // in order to handle data with breaks in the middle of lines, we need the
     // buffer to be the size of two lines minus one byte. so we allocate here:
     _ = try input_buffer.addManyAsSlice(params.page_size - 1);
@@ -640,7 +640,7 @@ pub fn reverse_input(
     var tail_len: usize = 0; // how many bytes carried over
     // note how many bytes we have read from the input (useful in the iteration
     // below)
-    var n_read: usize = line_length;
+    var n_read: usize = normal_line_length;
 
     // iterate over the data
     while (true) {
@@ -653,19 +653,21 @@ pub fn reverse_input(
 
         // iterate over the lines
         while (input_buffer_line_iter.next()) |line| {
-            // TODO: clean up this logic about line lengths. it's terrible
-            // if the current line is empty, then we are probably at the end of
-            // the dump
-            if (line.len < 1) break;
+
             // if the current line is shorter than a normal line, we need to
-            // break out of this loop and read more data in.
-            if (line.len < line_length) {
-                // check if we are skipping
-                if (line[0] == '*') {
+            // check what is going on
+            if (line.len < normal_line_length) {
+                // if the current line is empty, then we may be at the end
+                if (line.len == 0) {
+                    tail_len = 0;
+                    break;
+                }
+                if (line[0] == '*') { // check if we are skipping
                     last_data_index = new_data_index;
                     skipping = true;
+                    diagnostic.line_number += 1;
                     continue;
-                } else if (n_read > 0) {
+                } else if (n_read > 0) { // check if we last read any data in
                     tail_len = line.len;
                     break;
                 }
