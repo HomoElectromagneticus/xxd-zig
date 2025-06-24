@@ -604,22 +604,20 @@ pub fn reverse_input(
         false => 2,
     };
 
-    // handle data that traverses an edge in the input stream
-    var tail_len: usize = 0; // how many bytes carried over
-
     // how many bytes we have reversed (useful for error catching and keeping
     // track of where we are in the input across buffers)
     var bytes_written: usize = 0;
 
-    diagnostic.line_number = 1; // for error handling
+    diagnostic.line_number = 0; // for error handling
 
+    // need some parameters to handle data dumped with autoskip
     const index_base: u8 = switch (params.decimal) {
         true => 10,
         false => 16,
     };
-    // var last_data_index: usize = 0;
+    var last_data_index: usize = 0;
     var new_data_index: usize = 0;
-    // var skipping: bool = false; // managing state
+    var skipping: bool = false; // managing state
 
     // setup iteration
     // first, we need an arraylist
@@ -630,12 +628,14 @@ pub fn reverse_input(
     const line_length = input_buffer.items.len;
     // in order to handle data with breaks in the middle of lines, we need the
     // buffer to be the size of two lines minus one byte. so we allocate here:
-    _ = try input_buffer.addManyAsSlice(line_length - 1);
-
+    _ = try input_buffer.addManyAsSlice(params.page_size - 1);
+    // handle data that traverses an edge in the input stream
+    var tail_len: usize = 0; // how many bytes carried over
     // note how many bytes we have read from the input (useful in the iteration
     // below)
     var n_read: usize = line_length;
 
+    // iterate over the data
     while (true) {
         // grab a slice of the valid data within the buffer. any data "outside"
         // this slice would be undefined or from previous file reads
@@ -646,14 +646,26 @@ pub fn reverse_input(
 
         // iterate over the lines
         while (input_buffer_line_iter.next()) |line| {
+            // TODO: clean up this logic about line lengths. it's terrible
+            // if the current line is empty, then we are probably at the end of
+            // the dump
+            if (line.len < 1) break;
             // if the current line is shorter than a normal line, we need to
             // break out of this loop and read more data in.
-            if (line.len < line_length and n_read != 0) {
-                // TODO: detect the autoskip '*' character and do something.
-                //       this is probably the best place to check for it
-                tail_len = line.len;
-                break;
+            if (line.len < line_length) {
+                // check if we are skipping
+                if (line[0] == '*') {
+                    last_data_index = new_data_index;
+                    skipping = true;
+                    continue;
+                } else if (n_read > 0) {
+                    tail_len = line.len;
+                    break;
+                }
             }
+
+            diagnostic.line_number += 1;
+
             // setup window iterator for the line
             var running_over_index = true; // lines always start with an index
             var colon_position: usize = undefined;
@@ -685,6 +697,15 @@ pub fn reverse_input(
                         running_over_index = false;
                     }
                 } else {
+                    // if we have been skipping, we need to fill in the right
+                    // amount of null bytes
+                    if (skipping) {
+                        for (0..(new_data_index - last_data_index - params.num_columns)) |_| {
+                            try writer.writeByte(0);
+                            bytes_written += 1;
+                        }
+                        skipping = false;
+                    }
                     // if we find the "  " sequence, we've hit the ASCII
                     // representation part of the dump and can skip to the next
                     // line
@@ -729,8 +750,7 @@ pub fn reverse_input(
         if (n_read == 0) break; // reached EOF, processed everything
 
         // read into the buffer exactly one page
-        // std.debug.print("Tail length = {d}\n", .{tail_len});
-        n_read = try reader.read(input_buffer.items[tail_len..(tail_len + line_length - 1)]);
+        n_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
 
         // if we read nothing from the file and there is no "tail" left, we are
         // at the end of the file
