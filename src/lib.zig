@@ -412,6 +412,7 @@ pub fn print_output(
 ) !void {
     // allocate memory for the input buffer
     var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
+    defer input_buffer.deinit(allocator);
     _ = try input_buffer.addManyAsSlice(allocator, (params.page_size + (params.num_columns - 1)));
 
     // keep a local copy of the autoskip flag in order to turn it off for the
@@ -621,9 +622,15 @@ pub fn reverse_input(
 
     // setup iteration
     // first, we need an arraylist
+    // TODO: make this an unmanaged arraylist
     var input_buffer = std.ArrayList(u8).init(allocator);
+    defer input_buffer.deinit();
     // read in the first line in order to figure out the buffer size
-    try reader.streamUntilDelimiter(input_buffer.writer(), '\n', params.page_size);
+    try reader.streamUntilDelimiter(
+        input_buffer.writer(),
+        '\n',
+        params.page_size,
+    );
     // we can now determine the file's line length from what's in the buffer
     const line_length = input_buffer.items.len;
     // in order to handle data with breaks in the middle of lines, we need the
@@ -762,14 +769,16 @@ pub fn reverse_input(
 test "bad index in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true };
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
     const malformed_input = "0000zxcv: 4c6f  Lo\n";
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
 
     try std.testing.expectError(error.DumpParseError, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }
@@ -777,14 +786,16 @@ test "bad index in reverse mode" {
 test "invalid hex character found in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true };
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
     const malformed_input = "00000000: 4c6z  L.\n";
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
 
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }
@@ -792,14 +803,16 @@ test "invalid hex character found in reverse mode" {
 test "invalid binary character found in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true, .binary = true };
+    var params = printParams{ .reverse = true, .binary = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
     const malformed_input = "00000000: 01001100 abcdefgh  L.\n";
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
 
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }
@@ -807,14 +820,33 @@ test "invalid binary character found in reverse mode" {
 test "writing nothing because of malformed reverse input" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true };
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
-    const malformed_input = "ghijklmnopqrstuv.$";
+    const malformed_input = "ghijklmnopqrstuv.$\n";
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
 
     try std.testing.expectError(error.NothingWritten, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
+        &diag,
+    ));
+}
+
+test "missing newline after reading many bytes errors out" {
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
+    var diag = Diagnostic{};
+    const malformed_input = "ghijklmnopqrstuv.$ long input";
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
+
+    try std.testing.expectError(error.EndOfStream, reverse_input(
+        buffer.writer(),
+        &params,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }

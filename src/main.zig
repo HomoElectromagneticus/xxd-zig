@@ -267,25 +267,29 @@ pub fn main() !u8 {
     var diag = lib.Diagnostic{};
 
     // handle the special case of the string input
-    // if (res.args.string) |s| {
-    //     // reverse mode for an input string is not allowed. this is kind of a
-    //     // nonsensical use case
-    //     if (print_params.reverse) {
-    //         try stderr.writeAll(rev_input_string_msg);
-    //         return 1;
-    //     }
+    if (res.args.string) |s| {
+        // reverse mode for an input string is not allowed. this is kind of a
+        // nonsensical use case
+        if (print_params.reverse) {
+            try stderr.writeAll(rev_input_string_msg);
+            return 1;
+        }
+        // get a stream into the input string (needed to get a reader)
+        var input_string_stream = std.io.fixedBufferStream(s);
 
-    //     lib.print_output(
-    //         stdout_buf,
-    //         &print_params,
-    //         s,
-    //     ) catch |err| {
-    //         try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
-    //         return 1;
-    //     };
-    //     try bw.flush();
-    //     return 0;
-    // }
+        // print the output
+        lib.print_output(
+            stdout_buf,
+            &print_params,
+            arena.allocator(),
+            input_string_stream.reader(),
+        ) catch |err| {
+            try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
+            return 1;
+        };
+        try bw.flush();
+        return 0;
+    }
 
     // get a file handle to the input (stdin or a file)
     const file = blk: {
@@ -327,25 +331,27 @@ pub fn main() !u8 {
             arena.allocator(),
             reader,
             &diag,
-        ) catch {
-            // ) catch |err| {
-            // switch (err) {
-            //     error.DumpParseError => {
-            //         try bw.flush(); // flush stdout before writing to stderr
-            //         try stderr.print("\nxxd-zig: Parsing error at line {d}.", .{diag.line_number});
-            //         try stderr.writeAll(rev_modes_msg);
-            //     },
-            //     error.InvalidCharacter => {
-            //         try bw.flush(); // flush stdout before writing to stderr
-            //         try stderr.print("\nxxd-zig: Invalid character on line {d}.", .{diag.line_number});
-            //         try stderr.writeAll(rev_invalid_char_msg);
-            //     },
-            //     error.NothingWritten => {
-            //         try bw.flush(); // flush stdout before writing to stderr
-            //         try stderr.writeAll(rev_nothing_printed_msg);
-            //     },
-            //     else => try stderr.print("xxd-zig: Error reversing dump - {s}\n", .{@errorName(err)}),
-            // }
+        ) catch |err| {
+            switch (err) {
+                error.EndOfStream => {
+                    try stderr.print("\nxxd-zig: No line break found after reading {d} bytes! Is the input really a hex dump?", .{print_params.page_size});
+                },
+                error.DumpParseError => {
+                    try bw.flush(); // flush stdout before writing to stderr
+                    try stderr.print("\nxxd-zig: Parsing error at line {d}.", .{diag.line_number});
+                    try stderr.writeAll(rev_modes_msg);
+                },
+                error.InvalidCharacter => {
+                    try bw.flush(); // flush stdout before writing to stderr
+                    try stderr.print("\nxxd-zig: Invalid character on line {d}.", .{diag.line_number});
+                    try stderr.writeAll(rev_invalid_char_msg);
+                },
+                error.NothingWritten => {
+                    try bw.flush(); // flush stdout before writing to stderr
+                    try stderr.writeAll(rev_nothing_printed_msg);
+                },
+                else => try stderr.print("xxd-zig: Error reversing dump - {s}\n", .{@errorName(err)}),
+            }
             return 1;
         };
     } else {
