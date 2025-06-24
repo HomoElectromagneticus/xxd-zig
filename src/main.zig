@@ -320,42 +320,39 @@ pub fn main() !u8 {
     const reader = file.reader();
     defer file.close();
 
-    // allocate memory for the input buffer
-    var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
-    _ = try input_buffer.addManyAsSlice(arena.allocator(), (print_params.page_size + print_params.num_columns - 1));
-
     if (print_params.reverse) {
         lib.reverse_input(
             stdout_buf,
             &print_params,
-            input_buffer,
+            arena.allocator(),
             reader,
             &diag,
-        ) catch |err| {
-            switch (err) {
-                error.DumpParseError => {
-                    try bw.flush(); // flush stdout before writing to stderr
-                    try stderr.print("\nxxd-zig: Parsing error at line {d}.", .{diag.line_number});
-                    try stderr.writeAll(rev_modes_msg);
-                },
-                error.InvalidCharacter => {
-                    try bw.flush(); // flush stdout before writing to stderr
-                    try stderr.print("\nxxd-zig: Invalid character on line {d}.", .{diag.line_number});
-                    try stderr.writeAll(rev_invalid_char_msg);
-                },
-                error.NothingWritten => {
-                    try bw.flush(); // flush stdout before writing to stderr
-                    try stderr.writeAll(rev_nothing_printed_msg);
-                },
-                else => try stderr.print("xxd-zig: Error reversing dump - {s}\n", .{@errorName(err)}),
-            }
+        ) catch {
+            // ) catch |err| {
+            // switch (err) {
+            //     error.DumpParseError => {
+            //         try bw.flush(); // flush stdout before writing to stderr
+            //         try stderr.print("\nxxd-zig: Parsing error at line {d}.", .{diag.line_number});
+            //         try stderr.writeAll(rev_modes_msg);
+            //     },
+            //     error.InvalidCharacter => {
+            //         try bw.flush(); // flush stdout before writing to stderr
+            //         try stderr.print("\nxxd-zig: Invalid character on line {d}.", .{diag.line_number});
+            //         try stderr.writeAll(rev_invalid_char_msg);
+            //     },
+            //     error.NothingWritten => {
+            //         try bw.flush(); // flush stdout before writing to stderr
+            //         try stderr.writeAll(rev_nothing_printed_msg);
+            //     },
+            //     else => try stderr.print("xxd-zig: Error reversing dump - {s}\n", .{@errorName(err)}),
+            // }
             return 1;
         };
     } else {
         lib.print_output(
             stdout_buf,
             &print_params,
-            input_buffer,
+            arena.allocator(),
             reader,
         ) catch |err| {
             try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
