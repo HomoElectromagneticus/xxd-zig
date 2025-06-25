@@ -4,9 +4,10 @@ const lib = @import("lib.zig");
 
 const rev_modes_msg =
     \\
-    \\xxd-zig: Error while parsing the dump in reverse mode! This could be
-    \\         because the arguments used to make the dump do not match those
-    \\         used to reverse the dump (-b for binary, -a for autoskip, etc).
+    \\xxd-zig: Error while parsing the dump in reverse mode! This could
+    \\         be because the arguments used to make the dump do not match
+    \\         those used to reverse the dump (-b for binary, -a for 
+    \\         autoskip, etc).
     \\
 ;
 
@@ -18,8 +19,8 @@ const rev_invalid_char_msg =
 
 const rev_nothing_printed_msg =
     \\xxd-zig: Nothing was printed while running in reverse mode! This
-    \\         could be because you chose the wrong options for the data. Try
-    \\         passing in -h for for help.
+    \\         could be because you chose the wrong options for the data.
+    \\         Try passing in -h for for help.
     \\
 ;
 
@@ -39,7 +40,7 @@ const no_c_autoskip_msg =
 ;
 
 const no_index_msg =
-    \\xxd-zig: There is no index in this mode, the -d option has no affect.
+    \\xxd-zig: There is no index in this mode, the -d option has no effect.
     \\
 ;
 
@@ -195,7 +196,7 @@ pub fn main() !u8 {
         }
         // there is no index in c-include mode, so this would do nothing
         if (res.args.p != 0) {
-            try stderr.writeAll(no_index_msg);
+            try stderr.writeAll("xxd-zig: Incompatible modes! Try -h for help.\n");
             return 1;
         }
     }
@@ -263,7 +264,7 @@ pub fn main() !u8 {
     }
 
     // initialize the diagnostic (for telling the user where in the source data
-    // the program ran into errors)
+    // the program ran into an error)
     var diag = lib.Diagnostic{};
 
     // handle the special case of the string input
@@ -284,7 +285,7 @@ pub fn main() !u8 {
             arena.allocator(),
             input_string_stream.reader(),
         ) catch |err| {
-            try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
+            try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
             return 1;
         };
         try bw.flush();
@@ -320,16 +321,14 @@ pub fn main() !u8 {
             break :blk file;
         }
     };
-    // get a reader to the file and make sure the file closes at the end
-    const reader = file.reader();
-    defer file.close();
+    defer file.close(); // make sure the file closes at the end
 
     if (print_params.reverse) {
         lib.reverse_input(
             stdout_buf,
             &print_params,
             arena.allocator(),
-            reader,
+            file.reader(),
             &diag,
         ) catch |err| {
             switch (err) {
@@ -359,7 +358,7 @@ pub fn main() !u8 {
             stdout_buf,
             &print_params,
             arena.allocator(),
-            reader,
+            file.reader(),
         ) catch |err| {
             try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
             return 1;

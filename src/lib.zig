@@ -620,14 +620,12 @@ pub fn reverse_input(
     var new_data_index: usize = 0;
     var skipping: bool = false; // managing state
 
-    // setup iteration
-    // first, we need an arraylist
-    // TODO: make this an unmanaged arraylist
-    var input_buffer = std.ArrayList(u8).init(allocator);
-    defer input_buffer.deinit();
+    // setup iteration. first, we need an arraylist
+    var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
+    defer input_buffer.deinit(allocator);
     // read in the first line in order to figure out the buffer size
     try reader.streamUntilDelimiter(
-        input_buffer.writer(),
+        input_buffer.writer(allocator),
         '\n',
         params.page_size,
     );
@@ -635,7 +633,7 @@ pub fn reverse_input(
     const normal_line_length = input_buffer.items.len;
     // in order to handle data with breaks in the middle of lines, we need the
     // buffer to be the size of two lines minus one byte. so we allocate here:
-    _ = try input_buffer.addManyAsSlice(params.page_size - 1);
+    _ = try input_buffer.addManyAsSlice(allocator, params.page_size - 1);
     // handle data that traverses an edge in the input stream
     var tail_len: usize = 0; // how many bytes carried over
     // note how many bytes we have read from the input (useful in the iteration
