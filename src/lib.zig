@@ -127,7 +127,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
     // number of printed characters of dumped input (not including the index
     // markers on the left!)
     var num_printed_chars: usize = 0;
-    // number of spaces for lining up the ascii characters in the final row
+    // number of spaces for lining up the ASCII characters in the final row
     var num_spaces: usize = 0;
 
     // split the input into groups, where size is given by the print parameters
@@ -178,7 +178,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
         num_printed_chars += try writer.write(" ");
     }
 
-    // if it's the last part of the input, we need to line up the ascii text
+    // if it's the last part of the input, we need to line up the ASCII text
     // with the previous columns
     if (input.len < params.num_columns) {
         num_spaces += params.line_length -| num_printed_chars;
@@ -246,13 +246,12 @@ test "validate non-colorised little-endian lower-case hex output" {
         &print_params,
         &test_input,
     );
-
     //                         extra space added in order to match xxd ----\
     //                                    space from the end of a group --\\
     try std.testing.expect(std.mem.eql(u8, list.items, "7f2d 2a31  "));
 }
 
-// for the ascii output on the right-hand-side
+// for the ASCII output on the right-hand-side
 fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
     for (input) |raw_char| {
         // handle color
@@ -266,8 +265,8 @@ fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
         }
         // actual character output (with non-printable characters as '.')
         switch (raw_char) {
-            32...126 => try writer.print("{c}", .{raw_char}),
-            else => try writer.writeAll("."),
+            32...126 => try writer.writeByte(raw_char),
+            else => try writer.writeByte('.'),
         }
     }
 }
@@ -282,7 +281,6 @@ test "validate non-colorised ASCII output" {
         &print_params,
         &test_input,
     );
-
     try std.testing.expect(std.mem.eql(u8, list.items, "Ab01.$."));
 }
 
@@ -310,7 +308,6 @@ test "validate plain hex dump for correct hex translation" {
         &print_params,
         &test_input,
     );
-
     try std.testing.expect(std.mem.eql(u8, list.items, "4c6f72656d\n"));
 }
 
@@ -327,7 +324,6 @@ test "validate plain hex dump for correct length" {
         &print_params,
         &test_input,
     );
-
     try std.testing.expect(list.items.len == 20);
 }
 
@@ -341,7 +337,6 @@ test "validate plain binary dump for correct binary translation" {
     };
     const test_input = [_]u8{ 'L', 'o' };
     try print_plain_dump(list.writer(), &print_params, &test_input);
-
     try std.testing.expect(std.mem.eql(u8, list.items, "0100110001101111\n"));
 }
 
@@ -355,7 +350,6 @@ test "validate plain binary dump for correct length" {
     };
     const test_input = [_]u8{ 'L', 'o', 0, '%' };
     try print_plain_dump(list.writer(), &print_params, &test_input);
-
     try std.testing.expect(list.items.len == 34);
 }
 
@@ -457,12 +451,12 @@ pub fn print_output(
             continue;
         }
 
-        // we'll use this variable to count the number of null lines in the output
-        // for the autoskip option
+        // we'll use this variable to count the number of null lines in the
+        // output for the autoskip option
         var num_zero_lines: usize = 0;
 
-        // split the buffer into segments based on the number of columns / bytes
-        // specified via the command line arguments (default 16)
+        // split the buffer into segments based on the number of columns /
+        // bytes specified via the command line arguments (default 16)
         var input_iterator = std.mem.window(
             u8,
             input_buffer_slice,
@@ -470,7 +464,7 @@ pub fn print_output(
             params.num_columns,
         );
 
-        // loop through the buffer and print the output in chunks of the columns
+        // loop through the buffer and print the bytes in chunks of the columns
         while (input_iterator.next()) |slice| {
             // if the window is not full, we need to ask the filesystem for the
             // next chunk of the input
@@ -527,7 +521,6 @@ pub fn print_output(
             );
         }
         if (n_read == 0) break; // reached EOF, processed everything
-
     }
 }
 
@@ -782,7 +775,6 @@ test "bad index in reverse mode" {
     var diag = Diagnostic{};
     const malformed_input = "0000zxcv: 4c6f  Lo\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-
     try std.testing.expectError(error.DumpParseError, reverse_input(
         buffer.writer(),
         &params,
@@ -799,7 +791,6 @@ test "invalid hex character found in reverse mode" {
     var diag = Diagnostic{};
     const malformed_input = "00000000: 4c6z  L.\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
@@ -816,7 +807,6 @@ test "invalid binary character found in reverse mode" {
     var diag = Diagnostic{};
     const malformed_input = "00000000: 01001100 abcdefgh  L.\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
@@ -833,7 +823,6 @@ test "writing nothing because of malformed reverse input" {
     var diag = Diagnostic{};
     const malformed_input = "ghijklmnopqrstuv.$\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-
     try std.testing.expectError(error.NothingWritten, reverse_input(
         buffer.writer(),
         &params,
@@ -850,7 +839,6 @@ test "missing newline after reading many bytes errors out" {
     var diag = Diagnostic{};
     const malformed_input = "ghijklmnopqrstuv.$ long input";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-
     try std.testing.expectError(error.EndOfStream, reverse_input(
         buffer.writer(),
         &params,

@@ -288,7 +288,7 @@ pub fn main() !u8 {
             try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
             return 1;
         };
-        try bw.flush();
+        try bw.flush(); // don't forget to flush!
         return 0;
     }
 
