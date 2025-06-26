@@ -265,10 +265,9 @@ fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
             }
         }
         // actual character output (with non-printable characters as '.')
-        if (raw_char >= 32 and raw_char <= 126) {
-            try writer.print("{c}", .{raw_char});
-        } else {
-            try writer.writeAll(".");
+        switch (raw_char) {
+            32...126 => try writer.print("{c}", .{raw_char}),
+            else => try writer.writeAll("."),
         }
     }
 }
