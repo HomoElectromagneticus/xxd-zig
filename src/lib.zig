@@ -591,6 +591,14 @@ test "test binary string converter outside the ASCII range" {
     try std.testing.expectEqual(0xff, convert_bin_strings(test_string));
 }
 
+fn find_first_char(target_slice: []const u8, char: u8) !usize {
+    for (0..(target_slice.len - 1)) |index| {
+        if (target_slice[index] == char) return index;
+    } else {
+        return error.EndOfStream;
+    }
+}
+
 pub fn reverse_input(
     writer: anytype,
     params: *printParams,
@@ -623,22 +631,18 @@ pub fn reverse_input(
     // setup iteration. first, we need an arraylist
     var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
     defer input_buffer.deinit(allocator);
-    // read in the first line in order to figure out the buffer size
-    try reader.streamUntilDelimiter(
-        input_buffer.writer(allocator),
-        '\n',
-        params.page_size,
-    );
-    // we determine the file's "normal" line length based on what's in the buffer
-    const normal_line_length = input_buffer.items.len;
+    // allocate a whole page of bytes
+    _ = try input_buffer.addManyAsSlice(allocator, params.page_size);
+    // try to read a whole page from the input (stdin, a file, or a string)
+    // this variable will store how many bytes reader (useful below)
+    var n_read = try reader.read(input_buffer.items);
+    // determine how long a line is in this dataset
+    const normal_line_length = try find_first_char(input_buffer.items, '\n');
     // in order to handle data with breaks in the middle of lines, we need the
-    // buffer to be the size of two lines minus one byte. so we allocate here:
-    _ = try input_buffer.addManyAsSlice(allocator, params.page_size - 1);
-    // handle data that traverses an edge in the input stream
+    // buffer to be the size of a page + the length of a line minus one byte
+    _ = try input_buffer.addManyAsSlice(allocator, normal_line_length - 1);
+
     var tail_len: usize = 0; // how many bytes carried over
-    // note how many bytes we have read from the input (useful in the iteration
-    // below)
-    var n_read: usize = normal_line_length;
 
     // iterate over the data
     while (true) {
@@ -673,8 +677,14 @@ pub fn reverse_input(
 
             diagnostic.line_number += 1;
 
+            // TODO: enable support for "plain" postscript dump reversal
             // setup window iterator for the line
-            var running_over_index = true; // lines always start with an index
+            var running_over_index: bool = undefined;
+            if (params.postscript) {
+                running_over_index = false; // lines always start with an index
+            } else {
+                running_over_index = true;
+            }
             var colon_position: usize = undefined;
             var line_iter = std.mem.window(
                 u8,
