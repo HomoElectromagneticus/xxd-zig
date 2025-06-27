@@ -284,18 +284,27 @@ test "validate non-colorised ASCII output" {
     try std.testing.expect(std.mem.eql(u8, list.items, "Ab01.$."));
 }
 
-fn print_plain_dump(writer: anytype, params: *printParams, input: []const u8) !void {
+fn print_plain_dump(
+    writer: anytype,
+    params: *printParams,
+    input: []const u8,
+    bytes_printed: *usize,
+) !void {
     for (input, 1..) |character, index| {
         if (params.binary) {
             try writer.writeAll(binCharset[character]);
+            bytes_printed.* += 1;
         } else {
             try writer.writeAll(&byte_to_hex_string(character, params));
+            bytes_printed.* += 1;
         }
-        if (index % params.num_columns == 0) {
-            if (index != input.len) try writer.writeByte('\n');
+        if (bytes_printed.* % params.num_columns == 0) {
+            if (index != input.len) {
+                try writer.writeByte('\n');
+            }
         }
     }
-    try writer.writeAll("\n");
+    //try writer.writeAll("\n");
 }
 
 test "validate plain hex dump for correct hex translation" {
@@ -303,12 +312,14 @@ test "validate plain hex dump for correct hex translation" {
     defer list.deinit();
     var print_params = printParams{ .colorize = false };
     const test_input = [_]u8{ 'L', 'o', 'r', 'e', 'm' };
+    var bytes_printed: usize = 0;
     try print_plain_dump(
         list.writer(),
         &print_params,
         &test_input,
+        &bytes_printed,
     );
-    try std.testing.expect(std.mem.eql(u8, list.items, "4c6f72656d\n"));
+    try std.testing.expect(std.mem.eql(u8, list.items, "4c6f72656d"));
 }
 
 test "validate plain hex dump for correct length" {
@@ -319,12 +330,14 @@ test "validate plain hex dump for correct length" {
         .num_columns = 8,
     };
     const test_input = [_]u8{ 'L', 'o', 'r', 'e', 'm', ' ', 'i', 'p', 's' };
+    var bytes_printed: usize = 0;
     try print_plain_dump(
         list.writer(),
         &print_params,
         &test_input,
+        &bytes_printed,
     );
-    try std.testing.expect(list.items.len == 20);
+    try std.testing.expect(list.items.len == 19);
 }
 
 test "validate plain binary dump for correct binary translation" {
@@ -336,8 +349,14 @@ test "validate plain binary dump for correct binary translation" {
         .num_columns = 2,
     };
     const test_input = [_]u8{ 'L', 'o' };
-    try print_plain_dump(list.writer(), &print_params, &test_input);
-    try std.testing.expect(std.mem.eql(u8, list.items, "0100110001101111\n"));
+    var bytes_printed: usize = 0;
+    try print_plain_dump(
+        list.writer(),
+        &print_params,
+        &test_input,
+        &bytes_printed,
+    );
+    try std.testing.expect(std.mem.eql(u8, list.items, "0100110001101111"));
 }
 
 test "validate plain binary dump for correct length" {
@@ -349,11 +368,22 @@ test "validate plain binary dump for correct length" {
         .num_columns = 3,
     };
     const test_input = [_]u8{ 'L', 'o', 0, '%' };
-    try print_plain_dump(list.writer(), &print_params, &test_input);
-    try std.testing.expect(list.items.len == 34);
+    var bytes_printed: usize = 0;
+    try print_plain_dump(
+        list.writer(),
+        &print_params,
+        &test_input,
+        &bytes_printed,
+    );
+    try std.testing.expect(list.items.len == 33);
 }
 
-fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !void {
+fn print_c_inc_style(
+    writer: anytype,
+    params: *printParams,
+    input: []const u8,
+    bytes_printed: *usize,
+) !void {
     if (params.c_style_name.len != 0) {
         if (params.c_style_capitalise) {
             try writer.writeAll("unsigned char ");
@@ -369,18 +399,19 @@ fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !
     }
     for (input, 0..) |character, index| {
         // handle linebreaks and the indenting to look like xxd
-        if (index % (params.num_columns) == 0 and index != 0) {
+        if (bytes_printed.* % (params.num_columns) == 0 and index != 0) {
             try writer.writeAll("\n  ");
         }
         if (params.binary) {
             try writer.writeAll("0b");
             try writer.writeAll(binCharset[character]);
-            if (index != (input.len - 1)) try writer.writeAll(", ");
+            bytes_printed.* += 1;
         } else {
             try writer.writeAll("0x");
             try writer.writeAll(&byte_to_hex_string(character, params));
-            if (index != (input.len - 1)) try writer.writeAll(", ");
+            bytes_printed.* += 1;
         }
+        if (index != (input.len - 1)) try writer.writeAll(", ");
     }
     if (params.c_style_name.len != 0) {
         if (params.c_style_capitalise) {
@@ -412,6 +443,8 @@ pub fn print_output(
     // very last line. otherwise autoskip could mask how big the file is
     var autoskip: bool = params.autoskip;
 
+    // TODO: This feature will break for very long input that spreads multiple
+    //       file reads. Fix it!
     // define how much of the input to print
     var length = input_buffer.items.len;
     if (params.stop_after != 0) length = params.stop_after;
@@ -421,8 +454,11 @@ pub fn print_output(
 
     var tail_len: usize = 0; // how many bytes are carried over
 
+    var bytes_printed: usize = 0;
+
     while (true) {
         // read into our buffer exactly one page
+        // try writer.print("Reading from the file", .{});
         const n_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
 
         // if we read nothing from the file and there is no "tail" left, we are
@@ -437,16 +473,20 @@ pub fn print_output(
                 writer,
                 params,
                 input_buffer_slice,
+                &bytes_printed,
             );
+            if (n_read < params.page_size) try writer.writeByte('\n');
             continue;
         }
 
+        // TODO: This code will break for input that extends over one page
         // if the user asked for a c import style ouput, use that function
         if (params.c_style) {
             try print_c_inc_style(
                 writer,
                 params,
                 input_buffer_slice,
+                &bytes_printed,
             );
             continue;
         }
@@ -647,7 +687,6 @@ pub fn reverse_input(
 
         // iterate over the lines
         while (input_buffer_line_iter.next()) |line| {
-
             // if the current line is shorter than a normal line, we need to
             // check what is going on
             if (line.len < normal_line_length) {
@@ -669,14 +708,8 @@ pub fn reverse_input(
 
             diagnostic.line_number += 1;
 
-            // TODO: enable support for "plain" postscript dump reversal
             // setup window iterator for the line
-            var running_over_index: bool = undefined;
-            if (params.postscript) {
-                running_over_index = false; // lines always start with an index
-            } else {
-                running_over_index = true;
-            }
+            var running_over_index = !params.postscript;
             var colon_position: usize = undefined;
             var line_iter = std.mem.window(
                 u8,
@@ -722,7 +755,8 @@ pub fn reverse_input(
                         break;
                     }
 
-                    if (slice[0] == ' ') continue; // handle arbitrary byte groupings
+                    // handle arbitrary byte groupings when not in "plain" mode
+                    if (!params.postscript) if (slice[0] == ' ') continue;
 
                     // parse the data
                     if (params.binary) {
@@ -760,7 +794,6 @@ pub fn reverse_input(
 
         // read into the buffer exactly one page
         n_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
-
         // if we read nothing from the file and there is no "tail" left, we are
         // at the end of the file
         if (n_read == 0 and tail_len == 0) break;
