@@ -384,7 +384,8 @@ fn print_c_inc_style(
     input: []const u8,
     bytes_printed: *usize,
 ) !void {
-    if (params.c_style_name.len != 0) {
+    // print the header
+    if (params.c_style_name.len != 0 and bytes_printed.* == 0) {
         if (params.c_style_capitalise) {
             try writer.writeAll("unsigned char ");
             for (params.c_style_name) |char| {
@@ -397,6 +398,7 @@ fn print_c_inc_style(
     } else {
         try writer.writeAll("  ");
     }
+    // print the actual data
     for (input, 0..) |character, index| {
         // handle linebreaks and the indenting to look like xxd
         if (bytes_printed.* % (params.num_columns) == 0 and index != 0) {
@@ -413,18 +415,21 @@ fn print_c_inc_style(
         }
         if (index != (input.len - 1)) try writer.writeAll(", ");
     }
-    if (params.c_style_name.len != 0) {
-        if (params.c_style_capitalise) {
-            try writer.writeAll("\n};\nunsigned int ");
-            for (params.c_style_name) |char| {
-                try writer.writeByte(std.ascii.toUpper(char));
-            }
-            try writer.print("_LEN = {d};\n", .{input.len});
-        } else {
-            try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
+}
+
+fn print_c_inc_style_end(
+    writer: anytype,
+    params: *printParams,
+    bytes_printed: *usize,
+) !void {
+    if (params.c_style_capitalise) {
+        try writer.writeAll("\n};\nunsigned int ");
+        for (params.c_style_name) |char| {
+            try writer.writeByte(std.ascii.toUpper(char));
         }
+        try writer.print("_LEN = {d};\n", .{bytes_printed.*});
     } else {
-        try writer.writeAll("\n");
+        try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, bytes_printed.* });
     }
 }
 
@@ -475,11 +480,10 @@ pub fn print_output(
                 input_buffer_slice,
                 &bytes_printed,
             );
-            if (n_read < params.page_size) try writer.writeByte('\n');
+            if (n_read == 0) try writer.writeByte('\n');
             continue;
         }
 
-        // TODO: This code will break for input that extends over one page
         // if the user asked for a c import style ouput, use that function
         if (params.c_style) {
             try print_c_inc_style(
@@ -488,6 +492,13 @@ pub fn print_output(
                 input_buffer_slice,
                 &bytes_printed,
             );
+            if (n_read < params.page_size) {
+                try print_c_inc_style_end(
+                    writer,
+                    params,
+                    &bytes_printed,
+                );
+            }
             continue;
         }
 
