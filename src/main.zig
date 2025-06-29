@@ -236,10 +236,18 @@ pub fn main() !u8 {
 
     if (res.args.u != 0) print_params.upper_case = true;
 
+    // adjust output length to follow xxd's standard of "length _after_ seek"
+    if (print_params.stop_after) |stop_after| {
+        print_params.stop_after = stop_after + print_params.start_at;
+    }
+
     // turn off colorize if the user chooses, or if the output is not a terminal
     if ((res.args.R != 0) or !(std.fs.File.isTty(stdout_file))) {
         print_params.colorize = false;
     }
+
+    // TODO: warn user if they use the -s or -l options during reverse mode
+    //       this will have no effect (just link in xxd)
 
     if (res.args.r != 0) {
         // the original can't reverse little-endian or c-inlude style dumps either

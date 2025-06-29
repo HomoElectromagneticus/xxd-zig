@@ -20,7 +20,7 @@ pub const printParams = struct {
     little_endian: bool = false,
     group_size: usize = 2,
     c_style: bool = false,
-    stop_after: usize = undefined,
+    stop_after: ?usize = null,
     c_style_name: []const u8 = undefined,
     position_offset: usize = 0,
     postscript: bool = false,
@@ -448,11 +448,11 @@ pub fn print_output(
     // very last line. otherwise autoskip could mask how big the file is
     var autoskip: bool = params.autoskip;
 
-    // TODO: This feature will break for very long input that spreads multiple
-    //       file reads. Fix it!
-    // define how much of the input to print
-    var length = input_buffer.items.len;
-    if (params.stop_after != 0) length = params.stop_after;
+    // handle seeking the input to a given byte count (across buffer reads)
+    var total_n_read: usize = 0;
+    var slice_start_at: usize = 0;
+
+    var slice_stop_at: usize = 0;
 
     // this variable is used to print the file position information for a row
     var file_pos: usize = params.position_offset + params.start_at;
@@ -463,14 +463,38 @@ pub fn print_output(
 
     while (true) {
         // read into our buffer exactly one page
-        // try writer.print("Reading from the file", .{});
         const n_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
+        total_n_read += n_read;
 
         // if we read nothing from the file and there is no "tail" left, we are
         // at the end of the file
         if (n_read == 0 and tail_len == 0) break;
 
-        const input_buffer_slice = input_buffer.items[0..(tail_len + n_read)];
+        // handle seeking the input to a given byte count (across buffer reads)
+        if (params.start_at > total_n_read) {
+            continue;
+        } else if ((total_n_read - params.start_at) < (n_read)) {
+            slice_start_at = n_read - (total_n_read - params.start_at) - tail_len;
+        } else {
+            slice_start_at = 0;
+        }
+
+        // handle stopping after a certain byte count (across buffer reads)
+        if (params.stop_after) |stop_after| {
+            if (stop_after <= total_n_read) {
+                if (n_read == 0) {
+                    slice_stop_at = tail_len;
+                } else {
+                    slice_stop_at = (tail_len + n_read) -| (total_n_read -| stop_after);
+                }
+            } else {
+                break;
+            }
+        } else {
+            slice_stop_at = (tail_len + n_read);
+        }
+
+        const input_buffer_slice = input_buffer.items[slice_start_at..slice_stop_at];
 
         // if the user asked for plain dump, just dump everything no formatting
         if (params.postscript) {
