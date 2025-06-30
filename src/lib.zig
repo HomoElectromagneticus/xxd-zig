@@ -38,10 +38,10 @@ const hexCharsetLower = "0123456789abcdef";
 
 // use a look-up-table to convert the input data into hex (is much faster than
 // the zig standard library's format function)
-fn byte_to_hex_string(input: u8, params: *printParams) [2]u8 {
+fn byte_to_hex_string(input: u8, upper_case: bool) [2]u8 {
     var output_string: [2]u8 = undefined;
     // pick the LUT depending on the user's choice of upper or lower case
-    if (params.upper_case) {
+    if (upper_case) {
         output_string[0] = hexCharsetUpper[@as(usize, input >> 4) & 0x0F];
         output_string[1] = hexCharsetUpper[@as(usize, input) & 0x0F];
     } else {
@@ -53,20 +53,18 @@ fn byte_to_hex_string(input: u8, params: *printParams) [2]u8 {
 
 test "confirm upper case hex convertion works" {
     const test_char = 'L';
-    var print_params = printParams{ .upper_case = true };
     try std.testing.expect(std.mem.eql(
         u8,
-        &byte_to_hex_string(test_char, &print_params),
+        &byte_to_hex_string(test_char, true),
         "4C",
     ));
 }
 
 test "confirm lower case hex convertion works" {
     const test_char = 'm';
-    var print_params = printParams{ .upper_case = false };
     try std.testing.expect(std.mem.eql(
         u8,
-        &byte_to_hex_string(test_char, &print_params),
+        &byte_to_hex_string(test_char, false),
         "6d",
     ));
 }
@@ -171,7 +169,8 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
                 }
                 // print the hex value of the character (no need for print()'s
                 // formatting, we can write directly to stdout or the file)
-                num_printed_chars += try writer.write(&byte_to_hex_string(group[i], params));
+                const buf = byte_to_hex_string(group[i], params.upper_case);
+                num_printed_chars += try writer.write(&buf);
             }
         }
         // at the end of a group, add a space
@@ -190,7 +189,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
         for (0..num_spaces) |_| try writer.writeAll(" ");
     }
     // add an extra space to copy xxd (also helps decoding reverse dumps)
-    try writer.writeAll(" ");
+    try writer.writeByte(' ');
     return input.len;
 }
 
@@ -295,7 +294,7 @@ fn print_plain_dump(
             try writer.writeAll(binCharset[character]);
             bytes_printed.* += 1;
         } else {
-            try writer.writeAll(&byte_to_hex_string(character, params));
+            try writer.writeAll(&byte_to_hex_string(character, params.upper_case));
             bytes_printed.* += 1;
         }
         if (bytes_printed.* % params.num_columns == 0) {
@@ -304,7 +303,6 @@ fn print_plain_dump(
             }
         }
     }
-    //try writer.writeAll("\n");
 }
 
 test "validate plain hex dump for correct hex translation" {
@@ -410,7 +408,7 @@ fn print_c_inc_style(
             bytes_printed.* += 1;
         } else {
             try writer.writeAll("0x");
-            try writer.writeAll(&byte_to_hex_string(character, params));
+            try writer.writeAll(&byte_to_hex_string(character, params.upper_case));
             bytes_printed.* += 1;
         }
         if (index != (input.len - 1)) try writer.writeAll(", ");
@@ -573,6 +571,7 @@ pub fn print_output(
                 continue;
             }
 
+            // TODO: think about a faster way to print these indexes
             // print the file position in hex (default) or decimal
             if (params.decimal) {
                 try writer.print("{d:0>8}: ", .{file_pos});
@@ -597,6 +596,29 @@ pub fn print_output(
         }
         if (n_read == 0) break; // reached EOF, processed everything
     }
+}
+
+test "validate seek and length options" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    var print_params = printParams{
+        .colorize = false,
+        .start_at = 1,
+        .stop_after = 5,
+        .num_columns = 8,
+        .line_length = 20,
+        .page_size = 16384,
+    };
+    const test_input = "Lorem ";
+    var test_input_fbs = std.io.fixedBufferStream(test_input);
+
+    try print_output(
+        list.writer(),
+        &print_params,
+        std.testing.allocator,
+        test_input_fbs.reader(),
+    );
+    try std.testing.expect(std.mem.eql(u8, list.items, "00000001: 6f72 656d            orem\n"));
 }
 
 fn convert_hex_strings(input: []const u8) !u8 {

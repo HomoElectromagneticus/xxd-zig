@@ -49,6 +49,11 @@ const incompatible_dump_type_msg =
     \\
 ;
 
+const no_effect =
+    \\zig-xxd: Some options you have chosen will have no effect.
+    \\
+;
+
 // only works on linux & MacOS. on windows, it will simply always return 80
 fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
     var winsize: std.posix.system.winsize = undefined;
@@ -241,19 +246,21 @@ pub fn main() !u8 {
         print_params.stop_after = stop_after + print_params.start_at;
     }
 
-    // turn off colorize if the user chooses, or if the output is not a terminal
+    // turn off colors if the user chooses, or if the output is not a terminal
     if ((res.args.R != 0) or !(std.fs.File.isTty(stdout_file))) {
         print_params.colorize = false;
     }
 
-    // TODO: warn user if they use the -s or -l options during reverse mode
-    //       this will have no effect (just link in xxd)
-
     if (res.args.r != 0) {
-        // the original can't reverse little-endian or c-inlude style dumps either
+        // the original can't reverse little-endian or c-inlude dumps either
         if (print_params.little_endian or print_params.c_style) {
             try stderr.writeAll(incompatible_dump_type_msg);
             return 1;
+        }
+        // the original xxd ignores these parameters in reverse mode. we can be
+        // a bit nicer and at least warn the user!
+        if (print_params.start_at != 0 or print_params.stop_after != null) {
+            try stderr.writeAll(no_effect);
         }
         print_params.reverse = true;
     }
