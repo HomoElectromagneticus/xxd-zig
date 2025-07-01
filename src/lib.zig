@@ -174,7 +174,8 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
             }
         }
         // at the end of a group, add a space
-        num_printed_chars += try writer.write(" ");
+        try writer.writeByte(' ');
+        num_printed_chars += 1;
     }
 
     // if it's the last part of the input, we need to line up the ASCII text
@@ -251,10 +252,10 @@ test "validate non-colorised little-endian lower-case hex output" {
 }
 
 // for the ASCII output on the right-hand-side
-fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
+fn print_ascii(writer: anytype, color: bool, input: []const u8) !void {
     for (input) |raw_char| {
         // handle color
-        if (params.colorize) {
+        if (color) {
             switch (raw_char) {
                 0 => try colorize(writer, Color.white),
                 32...126 => try colorize(writer, Color.green),
@@ -273,11 +274,10 @@ fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
 test "validate non-colorised ASCII output" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
-    var print_params = printParams{ .colorize = false };
     const test_input = [_]u8{ 'A', 'b', '0', '1', 16, '$', 250 };
     try print_ascii(
         list.writer(),
-        &print_params,
+        false,
         &test_input,
     );
     try std.testing.expect(std.mem.eql(u8, list.items, "Ab01.$."));
@@ -447,7 +447,7 @@ pub fn print_output(
     var autoskip: bool = params.autoskip;
 
     // handle seeking the input to a given byte count (across buffer reads)
-    var total_n_read: usize = 0;
+    var total_bytes_read: usize = 0;
     var slice_start_at: usize = 0;
 
     var slice_stop_at: usize = 0;
@@ -461,35 +461,35 @@ pub fn print_output(
 
     while (true) {
         // read into our buffer exactly one page
-        const n_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
-        total_n_read += n_read;
+        const bytes_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
+        total_bytes_read += bytes_read;
 
         // if we read nothing from the file and there is no "tail" left, we are
         // at the end of the file
-        if (n_read == 0 and tail_len == 0) break;
+        if (bytes_read == 0 and tail_len == 0) break;
 
         // handle seeking the input to a given byte count (across buffer reads)
-        if (params.start_at > total_n_read) {
+        if (params.start_at > total_bytes_read) {
             continue;
-        } else if ((total_n_read - params.start_at) < (n_read)) {
-            slice_start_at = n_read - (total_n_read - params.start_at) - tail_len;
+        } else if ((total_bytes_read - params.start_at) < (bytes_read)) {
+            slice_start_at = bytes_read - (total_bytes_read - params.start_at) - tail_len;
         } else {
             slice_start_at = 0;
         }
 
         // handle stopping after a certain byte count (across buffer reads)
         if (params.stop_after) |stop_after| {
-            if (stop_after <= total_n_read) {
-                if (n_read == 0) {
+            if (stop_after <= total_bytes_read) {
+                if (bytes_read == 0) {
                     slice_stop_at = tail_len;
                 } else {
-                    slice_stop_at = (tail_len + n_read) -| (total_n_read -| stop_after);
+                    slice_stop_at = (tail_len + bytes_read) -| (total_bytes_read -| stop_after);
                 }
             } else {
                 break;
             }
         } else {
-            slice_stop_at = (tail_len + n_read);
+            slice_stop_at = tail_len + bytes_read;
         }
 
         const input_buffer_slice = input_buffer.items[slice_start_at..slice_stop_at];
@@ -502,7 +502,7 @@ pub fn print_output(
                 input_buffer_slice,
                 &bytes_printed,
             );
-            if (n_read == 0) try writer.writeByte('\n');
+            if (bytes_read < params.page_size) try writer.writeByte('\n');
             continue;
         }
 
@@ -514,7 +514,7 @@ pub fn print_output(
                 input_buffer_slice,
                 &bytes_printed,
             );
-            if (n_read < params.page_size) {
+            if (bytes_read < params.page_size) {
                 try print_c_inc_style_end(
                     writer,
                     params,
@@ -546,7 +546,7 @@ pub fn print_output(
                 // if the window is not full AND we have just read some bytes
                 // into the buffer, then we need to break out of this and
                 // carry over what is left before the next read
-                if (n_read > 0) break;
+                if (bytes_read > 0) break;
             }
 
             // turn off autoskip for the last line. this prevents the last line
@@ -578,11 +578,11 @@ pub fn print_output(
             } else {
                 try writer.print("{x:0>8}: ", .{file_pos});
             }
+            // TODO: keep track of bytes_written here as well!
             file_pos += try print_columns(writer, params, slice);
-            try print_ascii(writer, params, slice);
+            try print_ascii(writer, params.colorize, slice);
             try writer.writeAll("\n");
             if (params.colorize) try uncolor(writer); //reset color for next line
-
         }
 
         // copy the remaining bytes to the front of the buffer in anticipation
@@ -594,7 +594,7 @@ pub fn print_output(
                 input_buffer_slice[(input_buffer_slice.len - tail_len)..input_buffer_slice.len],
             );
         }
-        if (n_read == 0) break; // reached EOF, processed everything
+        if (bytes_read == 0) break; // reached EOF, processed everything
     }
 }
 
@@ -611,7 +611,6 @@ test "validate seek and length options" {
     };
     const test_input = "Lorem ";
     var test_input_fbs = std.io.fixedBufferStream(test_input);
-
     try print_output(
         list.writer(),
         &print_params,
@@ -724,8 +723,8 @@ pub fn reverse_input(
     _ = try input_buffer.addManyAsSlice(allocator, params.page_size);
     // try to read a whole page from the input (stdin, a file, or a string)
     // this variable will store how many bytes reader (useful below)
-    var n_read = try reader.read(input_buffer.items);
-    // determine how long a line is in this dataset
+    var bytes_read = try reader.read(input_buffer.items);
+    // determine how long a line is in the dataset
     const normal_line_length = try find_first_char(input_buffer.items, '\n');
     // in order to handle data with breaks in the middle of lines, we need the
     // buffer to be the size of a page + the length of a line minus one byte
@@ -737,7 +736,7 @@ pub fn reverse_input(
     while (true) {
         // grab a slice of the valid data within the buffer. any data "outside"
         // this slice would be undefined or from previous file reads
-        const input_buffer_slice = input_buffer.items[0..(tail_len + n_read)];
+        const input_buffer_slice = input_buffer.items[0..(tail_len + bytes_read)];
 
         // split the buffer up on newlines so we can iterate line-by-line
         var input_buffer_line_iter = std.mem.splitScalar(u8, input_buffer_slice, '\n');
@@ -757,7 +756,7 @@ pub fn reverse_input(
                     skipping = true;
                     diagnostic.line_number += 1;
                     continue;
-                } else if (n_read > 0) { // check if we last read any data in
+                } else if (bytes_read > 0) { // check if we last read any data in
                     tail_len = line.len;
                     break;
                 }
@@ -847,13 +846,13 @@ pub fn reverse_input(
                 input_buffer.items[(input_buffer_slice.len - tail_len)..input_buffer_slice.len],
             );
         }
-        if (n_read == 0) break; // reached EOF, processed everything
+        if (bytes_read == 0) break; // reached EOF, processed everything
 
         // read into the buffer exactly one page
-        n_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
+        bytes_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
         // if we read nothing from the file and there is no "tail" left, we are
         // at the end of the file
-        if (n_read == 0 and tail_len == 0) break;
+        if (bytes_read == 0 and tail_len == 0) break;
     }
     if (bytes_written <= 0) return error.NothingWritten;
 }
