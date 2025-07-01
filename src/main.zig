@@ -4,9 +4,10 @@ const lib = @import("lib.zig");
 
 const rev_modes_msg =
     \\
-    \\xxd-zig: Error while parsing the dump in reverse mode! This could be
-    \\         because the arguments used to make the dump do not match those
-    \\         used to reverse the dump (-b for binary, -a for autoskip, etc).
+    \\xxd-zig: Error while parsing the dump in reverse mode! This could
+    \\         be because the arguments used to make the dump do not match
+    \\         those used to reverse the dump (-b for binary, -a for 
+    \\         autoskip, etc).
     \\
 ;
 
@@ -18,8 +19,8 @@ const rev_invalid_char_msg =
 
 const rev_nothing_printed_msg =
     \\xxd-zig: Nothing was printed while running in reverse mode! This
-    \\         could be because you chose the wrong options for the data. Try
-    \\         passing in -h for for help.
+    \\         could be because you chose the wrong options for the data.
+    \\         Try passing in -h for for help.
     \\
 ;
 
@@ -39,12 +40,17 @@ const no_c_autoskip_msg =
 ;
 
 const no_index_msg =
-    \\xxd-zig: There is no index in this mode, the -d option has no affect.
+    \\xxd-zig: There is no index in this mode, the -d option has no effect.
     \\
 ;
 
 const incompatible_dump_type_msg =
     \\zig-xxd: Sorry, cannot revert this type of hexdump.
+    \\
+;
+
+const no_effect =
+    \\zig-xxd: Some options you have chosen will have no effect.
     \\
 ;
 
@@ -164,6 +170,9 @@ pub fn main() !u8 {
 
     var print_params = lib.printParams{};
 
+    // get the system page size to know how much to read at a time of the input
+    print_params.page_size = std.heap.pageSize();
+
     if (res.args.a != 0) print_params.autoskip = true;
 
     // setting the mode to plain dump (called postscript in the original xxd)
@@ -192,7 +201,7 @@ pub fn main() !u8 {
         }
         // there is no index in c-include mode, so this would do nothing
         if (res.args.p != 0) {
-            try stderr.writeAll(no_index_msg);
+            try stderr.writeAll("xxd-zig: Incompatible modes! Try -h for help.\n");
             return 1;
         }
     }
@@ -232,16 +241,26 @@ pub fn main() !u8 {
 
     if (res.args.u != 0) print_params.upper_case = true;
 
-    // turn off colorize if the user chooses, or if the output is not a terminal
+    // adjust output length to follow xxd's standard of "length _after_ seek"
+    if (print_params.stop_after) |stop_after| {
+        print_params.stop_after = stop_after + print_params.start_at;
+    }
+
+    // turn off colors if the user chooses, or if the output is not a terminal
     if ((res.args.R != 0) or !(std.fs.File.isTty(stdout_file))) {
         print_params.colorize = false;
     }
 
     if (res.args.r != 0) {
-        // the original can't reverse little-endian or c-inlude style dumps either
+        // the original can't reverse little-endian or c-inlude dumps either
         if (print_params.little_endian or print_params.c_style) {
             try stderr.writeAll(incompatible_dump_type_msg);
             return 1;
+        }
+        // the original xxd ignores these parameters in reverse mode. we can be
+        // a bit nicer and at least warn the user!
+        if (print_params.start_at != 0 or print_params.stop_after != null) {
+            try stderr.writeAll(no_effect);
         }
         print_params.reverse = true;
     }
@@ -260,7 +279,7 @@ pub fn main() !u8 {
     }
 
     // initialize the diagnostic (for telling the user where in the source data
-    // the program ran into errors)
+    // the program ran into an error)
     var diag = lib.Diagnostic{};
 
     // handle the special case of the string input
@@ -271,32 +290,39 @@ pub fn main() !u8 {
             try stderr.writeAll(rev_input_string_msg);
             return 1;
         }
+        // get a stream into the input string (needed to get a reader)
+        var input_string_stream = std.io.fixedBufferStream(s);
 
+        // print the output
         lib.print_output(
             stdout_buf,
             &print_params,
-            s,
+            arena.allocator(),
+            input_string_stream.reader(),
         ) catch |err| {
-            try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
+            try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
             return 1;
         };
-        try bw.flush();
+        try bw.flush(); // don't forget to flush!
         return 0;
     }
 
-    // allocate memory for input from stdin or a file
-    const input = blk: {
-        var input: []u8 = undefined;
-        if (res.positionals[0]) |positional| { //from an input file
-            // interpret the filepath
-            var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-            const path: []u8 = std.fs.realpath(
-                positional,
-                &path_buffer,
+    // get a file handle to the input (stdin or a file)
+    const file = blk: {
+        if (res.positionals[0]) |path_string| {
+            // define the c sytle import name from the file path if it's not
+            // set by the user via the "-n" option
+            if (print_params.c_style_name.len == 0) {
+                print_params.c_style_name = path_string;
+            }
+            // get the file
+            const file = std.fs.cwd().openFile(
+                path_string,
+                .{ .mode = .read_only },
             ) catch |err| {
                 switch (err) {
                     error.FileNotFound => {
-                        try stderr.print("xxd-zig: File \"{s}\" not found!\n", .{positional});
+                        try stderr.print("xxd-zig: File \"{s}\" not found!\n", .{path_string});
                     },
                     else => {
                         try stderr.print("xxd-zig: {s}\n", .{@errorName(err)});
@@ -304,59 +330,26 @@ pub fn main() !u8 {
                 }
                 return 1;
             };
-
-            // define the c sytle import name from the file path if it's not
-            // set by the user via the "-n" option
-            if (print_params.c_style_name.len == 0) {
-                print_params.c_style_name = positional;
-            }
-
-            // load the whole file into memory in a single allocation
-            // TODO: use a buffered reader so there is no limit on file size
-            input = std.fs.cwd().readFileAlloc(
-                arena.allocator(),
-                path,
-                std.math.maxInt(usize),
-            ) catch |err| {
-                switch (err) {
-                    error.AccessDenied => {
-                        try stderr.print("xxd-zig: Access to \"{s}\" denied!\n", .{positional});
-                    },
-                    error.FileTooBig => {
-                        try stderr.print("xxd-zig: File \"{s}\" is too big to be read! Upper limit is {d} bytes.\n", .{ positional, std.math.maxInt(usize) });
-                    },
-                    else => {
-                        try stderr.print("xxd-zig: Error allocating memory - {s}\n", .{@errorName(err)});
-                    },
-                }
-                return 1;
-            };
-        } else { //from stdin
-            // get a buffered reader
-            const stdin_file = std.io.getStdIn();
-            var br = std.io.bufferedReader(stdin_file.reader());
-            const stdin = br.reader();
-
-            // allocate memory to read from standard input
-            input = stdin.readAllAlloc(
-                arena.allocator(),
-                std.math.maxInt(usize),
-            ) catch |err| {
-                try stderr.print("xxd-zig: Error allocating memory - {s}\n", .{@errorName(err)});
-                return 1;
-            };
+            break :blk file;
+        } else {
+            const file = std.io.getStdIn();
+            break :blk file;
         }
-        break :blk input;
     };
+    defer file.close(); // make sure the file closes at the end
 
     if (print_params.reverse) {
         lib.reverse_input(
             stdout_buf,
             &print_params,
-            input,
+            arena.allocator(),
+            file.reader(),
             &diag,
         ) catch |err| {
             switch (err) {
+                error.EndOfStream => {
+                    try stderr.print("\nxxd-zig: No line break found after reading {d} bytes! Is the input really a hex dump?", .{print_params.page_size});
+                },
                 error.DumpParseError => {
                     try bw.flush(); // flush stdout before writing to stderr
                     try stderr.print("\nxxd-zig: Parsing error at line {d}.", .{diag.line_number});
@@ -379,7 +372,8 @@ pub fn main() !u8 {
         lib.print_output(
             stdout_buf,
             &print_params,
-            input,
+            arena.allocator(),
+            file.reader(),
         ) catch |err| {
             try stderr.print("xxd-zig: Error dumping - {s}\n", .{@errorName(err)});
             return 1;

@@ -20,7 +20,7 @@ pub const printParams = struct {
     little_endian: bool = false,
     group_size: usize = 2,
     c_style: bool = false,
-    stop_after: usize = undefined,
+    stop_after: ?usize = null,
     c_style_name: []const u8 = undefined,
     position_offset: usize = 0,
     postscript: bool = false,
@@ -29,6 +29,7 @@ pub const printParams = struct {
     upper_case: bool = false,
     line_length: usize = undefined,
     colorize: bool = true,
+    page_size: usize = undefined,
 };
 
 // look-up-tables for byte-to-hex conversion
@@ -37,10 +38,10 @@ const hexCharsetLower = "0123456789abcdef";
 
 // use a look-up-table to convert the input data into hex (is much faster than
 // the zig standard library's format function)
-fn byte_to_hex_string(input: u8, params: *printParams) [2]u8 {
+fn byte_to_hex_string(input: u8, upper_case: bool) [2]u8 {
     var output_string: [2]u8 = undefined;
     // pick the LUT depending on the user's choice of upper or lower case
-    if (params.upper_case) {
+    if (upper_case) {
         output_string[0] = hexCharsetUpper[@as(usize, input >> 4) & 0x0F];
         output_string[1] = hexCharsetUpper[@as(usize, input) & 0x0F];
     } else {
@@ -52,20 +53,18 @@ fn byte_to_hex_string(input: u8, params: *printParams) [2]u8 {
 
 test "confirm upper case hex convertion works" {
     const test_char = 'L';
-    var print_params = printParams{ .upper_case = true };
     try std.testing.expect(std.mem.eql(
         u8,
-        &byte_to_hex_string(test_char, &print_params),
+        &byte_to_hex_string(test_char, true),
         "4C",
     ));
 }
 
 test "confirm lower case hex convertion works" {
     const test_char = 'm';
-    var print_params = printParams{ .upper_case = false };
     try std.testing.expect(std.mem.eql(
         u8,
-        &byte_to_hex_string(test_char, &print_params),
+        &byte_to_hex_string(test_char, false),
         "6d",
     ));
 }
@@ -126,7 +125,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
     // number of printed characters of dumped input (not including the index
     // markers on the left!)
     var num_printed_chars: usize = 0;
-    // number of spaces for lining up the ascii characters in the final row
+    // number of spaces for lining up the ASCII characters in the final row
     var num_spaces: usize = 0;
 
     // split the input into groups, where size is given by the print parameters
@@ -170,14 +169,16 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
                 }
                 // print the hex value of the character (no need for print()'s
                 // formatting, we can write directly to stdout or the file)
-                num_printed_chars += try writer.write(&byte_to_hex_string(group[i], params));
+                const buf = byte_to_hex_string(group[i], params.upper_case);
+                num_printed_chars += try writer.write(&buf);
             }
         }
         // at the end of a group, add a space
-        num_printed_chars += try writer.write(" ");
+        try writer.writeByte(' ');
+        num_printed_chars += 1;
     }
 
-    // if it's the last part of the input, we need to line up the ascii text
+    // if it's the last part of the input, we need to line up the ASCII text
     // with the previous columns
     if (input.len < params.num_columns) {
         num_spaces += params.line_length -| num_printed_chars;
@@ -189,7 +190,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
         for (0..num_spaces) |_| try writer.writeAll(" ");
     }
     // add an extra space to copy xxd (also helps decoding reverse dumps)
-    try writer.writeAll(" ");
+    try writer.writeByte(' ');
     return input.len;
 }
 
@@ -245,17 +246,16 @@ test "validate non-colorised little-endian lower-case hex output" {
         &print_params,
         &test_input,
     );
-
     //                         extra space added in order to match xxd ----\
     //                                    space from the end of a group --\\
     try std.testing.expect(std.mem.eql(u8, list.items, "7f2d 2a31  "));
 }
 
-// for the ascii output on the right-hand-side
-fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
+// for the ASCII output on the right-hand-side
+fn print_ascii(writer: anytype, color: bool, input: []const u8) !void {
     for (input) |raw_char| {
         // handle color
-        if (params.colorize) {
+        if (color) {
             switch (raw_char) {
                 0 => try colorize(writer, Color.white),
                 32...126 => try colorize(writer, Color.green),
@@ -264,10 +264,9 @@ fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
             }
         }
         // actual character output (with non-printable characters as '.')
-        if (raw_char >= 32 and raw_char <= 126) {
-            try writer.print("{c}", .{raw_char});
-        } else {
-            try writer.writeAll(".");
+        switch (raw_char) {
+            32...126 => try writer.writeByte(raw_char),
+            else => try writer.writeByte('.'),
         }
     }
 }
@@ -275,29 +274,35 @@ fn print_ascii(writer: anytype, params: *printParams, input: []const u8) !void {
 test "validate non-colorised ASCII output" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
-    var print_params = printParams{ .colorize = false };
     const test_input = [_]u8{ 'A', 'b', '0', '1', 16, '$', 250 };
     try print_ascii(
         list.writer(),
-        &print_params,
+        false,
         &test_input,
     );
-
     try std.testing.expect(std.mem.eql(u8, list.items, "Ab01.$."));
 }
 
-fn print_plain_dump(writer: anytype, params: *printParams, input: []const u8) !void {
+fn print_plain_dump(
+    writer: anytype,
+    params: *printParams,
+    input: []const u8,
+    bytes_printed: *usize,
+) !void {
     for (input, 1..) |character, index| {
         if (params.binary) {
             try writer.writeAll(binCharset[character]);
+            bytes_printed.* += 1;
         } else {
-            try writer.writeAll(&byte_to_hex_string(character, params));
+            try writer.writeAll(&byte_to_hex_string(character, params.upper_case));
+            bytes_printed.* += 1;
         }
-        if (index % params.num_columns == 0) {
-            if (index != input.len) try writer.writeByte('\n');
+        if (bytes_printed.* % params.num_columns == 0) {
+            if (index != input.len) {
+                try writer.writeByte('\n');
+            }
         }
     }
-    try writer.writeAll("\n");
 }
 
 test "validate plain hex dump for correct hex translation" {
@@ -305,13 +310,14 @@ test "validate plain hex dump for correct hex translation" {
     defer list.deinit();
     var print_params = printParams{ .colorize = false };
     const test_input = [_]u8{ 'L', 'o', 'r', 'e', 'm' };
+    var bytes_printed: usize = 0;
     try print_plain_dump(
         list.writer(),
         &print_params,
         &test_input,
+        &bytes_printed,
     );
-
-    try std.testing.expect(std.mem.eql(u8, list.items, "4c6f72656d\n"));
+    try std.testing.expect(std.mem.eql(u8, list.items, "4c6f72656d"));
 }
 
 test "validate plain hex dump for correct length" {
@@ -322,13 +328,14 @@ test "validate plain hex dump for correct length" {
         .num_columns = 8,
     };
     const test_input = [_]u8{ 'L', 'o', 'r', 'e', 'm', ' ', 'i', 'p', 's' };
+    var bytes_printed: usize = 0;
     try print_plain_dump(
         list.writer(),
         &print_params,
         &test_input,
+        &bytes_printed,
     );
-
-    try std.testing.expect(list.items.len == 20);
+    try std.testing.expect(list.items.len == 19);
 }
 
 test "validate plain binary dump for correct binary translation" {
@@ -340,9 +347,14 @@ test "validate plain binary dump for correct binary translation" {
         .num_columns = 2,
     };
     const test_input = [_]u8{ 'L', 'o' };
-    try print_plain_dump(list.writer(), &print_params, &test_input);
-
-    try std.testing.expect(std.mem.eql(u8, list.items, "0100110001101111\n"));
+    var bytes_printed: usize = 0;
+    try print_plain_dump(
+        list.writer(),
+        &print_params,
+        &test_input,
+        &bytes_printed,
+    );
+    try std.testing.expect(std.mem.eql(u8, list.items, "0100110001101111"));
 }
 
 test "validate plain binary dump for correct length" {
@@ -354,13 +366,24 @@ test "validate plain binary dump for correct length" {
         .num_columns = 3,
     };
     const test_input = [_]u8{ 'L', 'o', 0, '%' };
-    try print_plain_dump(list.writer(), &print_params, &test_input);
-
-    try std.testing.expect(list.items.len == 34);
+    var bytes_printed: usize = 0;
+    try print_plain_dump(
+        list.writer(),
+        &print_params,
+        &test_input,
+        &bytes_printed,
+    );
+    try std.testing.expect(list.items.len == 33);
 }
 
-fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !void {
-    if (params.c_style_name.len != 0) {
+fn print_c_inc_style(
+    writer: anytype,
+    params: *printParams,
+    input: []const u8,
+    bytes_printed: *usize,
+) !void {
+    // print the header
+    if (params.c_style_name.len != 0 and bytes_printed.* == 0) {
         if (params.c_style_capitalise) {
             try writer.writeAll("unsigned char ");
             for (params.c_style_name) |char| {
@@ -373,117 +396,228 @@ fn print_c_inc_style(writer: anytype, params: *printParams, input: []const u8) !
     } else {
         try writer.writeAll("  ");
     }
+    // print the actual data
     for (input, 0..) |character, index| {
         // handle linebreaks and the indenting to look like xxd
-        if (index % (params.num_columns) == 0 and index != 0) {
+        if (bytes_printed.* % (params.num_columns) == 0 and index != 0) {
             try writer.writeAll("\n  ");
         }
         if (params.binary) {
             try writer.writeAll("0b");
             try writer.writeAll(binCharset[character]);
-            if (index != (input.len - 1)) try writer.writeAll(", ");
+            bytes_printed.* += 1;
         } else {
             try writer.writeAll("0x");
-            try writer.writeAll(&byte_to_hex_string(character, params));
-            if (index != (input.len - 1)) try writer.writeAll(", ");
+            try writer.writeAll(&byte_to_hex_string(character, params.upper_case));
+            bytes_printed.* += 1;
         }
-    }
-    if (params.c_style_name.len != 0) {
-        if (params.c_style_capitalise) {
-            try writer.writeAll("\n};\nunsigned int ");
-            for (params.c_style_name) |char| {
-                try writer.writeByte(std.ascii.toUpper(char));
-            }
-            try writer.print("_LEN = {d};\n", .{input.len});
-        } else {
-            try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, input.len });
-        }
-    } else {
-        try writer.writeAll("\n");
+        if (index != (input.len - 1)) try writer.writeAll(", ");
     }
 }
 
-pub fn print_output(writer: anytype, params: *printParams, input: []const u8) !void {
+fn print_c_inc_style_end(
+    writer: anytype,
+    params: *printParams,
+    bytes_printed: *usize,
+) !void {
+    if (params.c_style_capitalise) {
+        try writer.writeAll("\n};\nunsigned int ");
+        for (params.c_style_name) |char| {
+            try writer.writeByte(std.ascii.toUpper(char));
+        }
+        try writer.print("_LEN = {d};\n", .{bytes_printed.*});
+    } else {
+        try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, bytes_printed.* });
+    }
+}
+
+pub fn print_output(
+    writer: anytype,
+    params: *printParams,
+    allocator: std.mem.Allocator,
+    reader: anytype,
+) !void {
+    // allocate memory for the input buffer
+    var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
+    defer input_buffer.deinit(allocator);
+    _ = try input_buffer.addManyAsSlice(allocator, (params.page_size + (params.num_columns - 1)));
+
     // keep a local copy of the autoskip flag in order to turn it off for the
     // very last line. otherwise autoskip could mask how big the file is
     var autoskip: bool = params.autoskip;
 
-    // define how much of the input to print
-    var length = input.len;
-    if (params.stop_after != 0) length = params.stop_after;
+    // handle seeking the input to a given byte count (across buffer reads)
+    var total_bytes_read: usize = 0;
+    var slice_start_at: usize = 0;
+
+    var slice_stop_at: usize = 0;
 
     // this variable is used to print the file position information for a row
     var file_pos: usize = params.position_offset + params.start_at;
 
-    // if the user asked for plain dump, just dump everything no formatting
-    if (params.postscript) {
-        try print_plain_dump(
-            writer,
-            params,
-            input[params.start_at..length],
+    var tail_len: usize = 0; // how many bytes are carried over
+
+    var bytes_printed: usize = 0;
+
+    while (true) {
+        // read into our buffer exactly one page
+        const bytes_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
+        total_bytes_read += bytes_read;
+
+        // if we read nothing from the file and there is no "tail" left, we are
+        // at the end of the file
+        if (bytes_read == 0 and tail_len == 0) break;
+
+        // handle seeking the input to a given byte count (across buffer reads)
+        if (params.start_at > total_bytes_read) {
+            continue;
+        } else if ((total_bytes_read - params.start_at) < (bytes_read)) {
+            slice_start_at = bytes_read - (total_bytes_read - params.start_at) - tail_len;
+        } else {
+            slice_start_at = 0;
+        }
+
+        // handle stopping after a certain byte count (across buffer reads)
+        if (params.stop_after) |stop_after| {
+            if (stop_after <= total_bytes_read) {
+                if (bytes_read == 0) {
+                    slice_stop_at = tail_len;
+                } else {
+                    slice_stop_at = (tail_len + bytes_read) -| (total_bytes_read -| stop_after);
+                }
+            } else {
+                break;
+            }
+        } else {
+            slice_stop_at = tail_len + bytes_read;
+        }
+
+        const input_buffer_slice = input_buffer.items[slice_start_at..slice_stop_at];
+
+        // if the user asked for plain dump, just dump everything no formatting
+        if (params.postscript) {
+            try print_plain_dump(
+                writer,
+                params,
+                input_buffer_slice,
+                &bytes_printed,
+            );
+            if (bytes_read < params.page_size) try writer.writeByte('\n');
+            continue;
+        }
+
+        // if the user asked for a c import style ouput, use that function
+        if (params.c_style) {
+            try print_c_inc_style(
+                writer,
+                params,
+                input_buffer_slice,
+                &bytes_printed,
+            );
+            if (bytes_read < params.page_size) {
+                try print_c_inc_style_end(
+                    writer,
+                    params,
+                    &bytes_printed,
+                );
+            }
+            continue;
+        }
+
+        // we'll use this variable to count the number of null lines in the
+        // output for the autoskip option
+        var num_zero_lines: usize = 0;
+
+        // split the buffer into segments based on the number of columns /
+        // bytes specified via the command line arguments (default 16)
+        var input_iterator = std.mem.window(
+            u8,
+            input_buffer_slice,
+            params.num_columns,
+            params.num_columns,
         );
-        return;
+
+        // loop through the buffer and print the bytes in chunks of the columns
+        while (input_iterator.next()) |slice| {
+            // if the window is not full, we need to ask the filesystem for the
+            // next chunk of the input
+            if (slice.len < params.num_columns) {
+                tail_len = slice.len;
+                // if the window is not full AND we have just read some bytes
+                // into the buffer, then we need to break out of this and
+                // carry over what is left before the next read
+                if (bytes_read > 0) break;
+            }
+
+            // turn off autoskip for the last line. this prevents the last line
+            // from being skipped, which would end up hiding the file size
+            if (input_iterator.index == null) autoskip = false;
+
+            // if the segment is all zeros, count it. otherwise reset the count
+            if (std.mem.allEqual(u8, slice, 0)) {
+                num_zero_lines +|= 1;
+            } else {
+                num_zero_lines = 0;
+            }
+
+            // if the user has selected autoskip mode and the number of all-null
+            // segments is two or more, skip the segment
+            if (autoskip and num_zero_lines == 2) {
+                try writer.writeAll("*\n");
+                file_pos += slice.len;
+                continue;
+            } else if (autoskip and num_zero_lines > 2) {
+                file_pos += slice.len;
+                continue;
+            }
+
+            // TODO: think about a faster way to print these indexes
+            // print the file position in hex (default) or decimal
+            if (params.decimal) {
+                try writer.print("{d:0>8}: ", .{file_pos});
+            } else {
+                try writer.print("{x:0>8}: ", .{file_pos});
+            }
+            // TODO: keep track of bytes_written here as well!
+            file_pos += try print_columns(writer, params, slice);
+            try print_ascii(writer, params.colorize, slice);
+            try writer.writeAll("\n");
+            if (params.colorize) try uncolor(writer); //reset color for next line
+        }
+
+        // copy the remaining bytes to the front of the buffer in anticipation
+        // of the next page read
+        if (tail_len > 0) {
+            std.mem.copyForwards(
+                u8,
+                input_buffer.items[0..tail_len],
+                input_buffer_slice[(input_buffer_slice.len - tail_len)..input_buffer_slice.len],
+            );
+        }
+        if (bytes_read == 0) break; // reached EOF, processed everything
     }
+}
 
-    // if the user asked for a c import style ouput, use that function
-    if (params.c_style) {
-        try print_c_inc_style(
-            writer,
-            params,
-            input[params.start_at..length],
-        );
-        return;
-    }
-
-    // we'll use this variable to count the number of null lines in the output
-    // for the autoskip option
-    var num_zero_lines: usize = 0;
-
-    // split the buffer into segments based on the number of columns / bytes
-    // specified via the command line arguments (default 16)
-    var input_iterator = std.mem.window(
-        u8,
-        input[params.start_at..length],
-        params.num_columns,
-        params.num_columns,
+test "validate seek and length options" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    var print_params = printParams{
+        .colorize = false,
+        .start_at = 1,
+        .stop_after = 5,
+        .num_columns = 8,
+        .line_length = 20,
+        .page_size = 16384,
+    };
+    const test_input = "Lorem ";
+    var test_input_fbs = std.io.fixedBufferStream(test_input);
+    try print_output(
+        list.writer(),
+        &print_params,
+        std.testing.allocator,
+        test_input_fbs.reader(),
     );
-
-    // loop through the buffer and print the output in chunks of the columns
-    while (input_iterator.next()) |slice| {
-        // turn off autoskip for the last line. this prevents the last line
-        // from being skipped, which would end up hiding the file size
-        if (input_iterator.index == null) autoskip = false;
-
-        // if the segment is all zeros, count it. otherwise reset the count
-        if (std.mem.allEqual(u8, slice, 0)) {
-            num_zero_lines +|= 1;
-        } else {
-            num_zero_lines = 0;
-        }
-
-        // if the user has selected autoskip mode and the number of all-null
-        // segments is two or more, skip the segment
-        if (autoskip and num_zero_lines == 2) {
-            try writer.writeAll("*\n");
-            file_pos += slice.len;
-            continue;
-        } else if (autoskip and num_zero_lines > 2) {
-            file_pos += slice.len;
-            continue;
-        }
-
-        // print the file position in hex (default) or decimal
-        if (params.decimal) {
-            try writer.print("{d:0>8}: ", .{file_pos});
-        } else {
-            try writer.print("{x:0>8}: ", .{file_pos});
-        }
-        file_pos += try print_columns(writer, params, slice);
-        try print_ascii(writer, params, slice);
-        try writer.writeAll("\n");
-        if (params.colorize) try uncolor(writer); //reset color for next line
-
-    }
+    try std.testing.expect(std.mem.eql(u8, list.items, "00000001: 6f72 656d            orem\n"));
 }
 
 fn convert_hex_strings(input: []const u8) !u8 {
@@ -545,28 +679,35 @@ test "test binary string converter outside the ASCII range" {
     try std.testing.expectEqual(0xff, convert_bin_strings(test_string));
 }
 
+fn find_first_char(target_slice: []const u8, char: u8) !usize {
+    for (0..(target_slice.len - 1)) |index| {
+        if (target_slice[index] == char) return index;
+    } else {
+        return error.EndOfStream;
+    }
+}
+
 pub fn reverse_input(
     writer: anytype,
     params: *printParams,
-    input: []const u8,
+    allocator: std.mem.Allocator,
+    reader: anytype,
     diagnostic: *Diagnostic,
 ) !void {
-    // use a window iterator to move through the data, where the window size
+    // we use a window iterator to move through the data, where the window size
     // depends on if we are reversing a hex or binary dump
     const window_size: u8 = switch (params.binary) {
         true => 8,
         false => 2,
     };
-    var input_iterator = std.mem.window(
-        u8,
-        input,
-        window_size,
-        1,
-    );
 
-    // parameters needed to handle autoskip
-    var last_newline: usize = 0; //where in the input we found the last '\n'
-    var last_colon: usize = 0; //where in the input we found the last ": "
+    // how many bytes we have reversed (useful for error catching and keeping
+    // track of where we are in the input across buffers)
+    var bytes_written: usize = 0;
+
+    diagnostic.line_number = 0; // for error handling
+
+    // need some parameters to handle data dumped with autoskip
     const index_base: u8 = switch (params.decimal) {
         true => 10,
         false => 16,
@@ -575,130 +716,159 @@ pub fn reverse_input(
     var new_data_index: usize = 0;
     var skipping: bool = false; // managing state
 
-    // for error catching / handling
-    var bytes_writen: usize = 0;
-    diagnostic.line_number = 1;
+    // setup iteration. first, we need an arraylist
+    var input_buffer: std.ArrayListUnmanaged(u8) = .empty;
+    defer input_buffer.deinit(allocator);
+    // allocate a whole page of bytes
+    _ = try input_buffer.addManyAsSlice(allocator, params.page_size);
+    // try to read a whole page from the input (stdin, a file, or a string)
+    // this variable will store how many bytes reader (useful below)
+    var bytes_read = try reader.read(input_buffer.items);
+    // determine how long a line is in the dataset
+    const normal_line_length = try find_first_char(input_buffer.items, '\n');
+    // in order to handle data with breaks in the middle of lines, we need the
+    // buffer to be the size of a page + the length of a line minus one byte
+    _ = try input_buffer.addManyAsSlice(allocator, normal_line_length - 1);
 
-    // setup iteration
-    var running_over_index: bool = false; // managing state
-    if (params.postscript) running_over_index = true;
-    // iterate
-    while (input_iterator.next()) |slice| {
-        var write_buffer: u8 = undefined;
+    var tail_len: usize = 0; // how many bytes carried over
 
-        // if autoskip is enabled, check for a "\n*" sequence
-        if (params.autoskip) {
-            if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "\n*")) {
-                skipping = true;
-                last_newline += 2;
-                diagnostic.line_number += 1;
-                continue;
+    // iterate over the data
+    while (true) {
+        // grab a slice of the valid data within the buffer. any data "outside"
+        // this slice would be undefined or from previous file reads
+        const input_buffer_slice = input_buffer.items[0..(tail_len + bytes_read)];
+
+        // split the buffer up on newlines so we can iterate line-by-line
+        var input_buffer_line_iter = std.mem.splitScalar(u8, input_buffer_slice, '\n');
+
+        // iterate over the lines
+        while (input_buffer_line_iter.next()) |line| {
+            // if the current line is shorter than a normal line, we need to
+            // check what is going on
+            if (line.len < normal_line_length) {
+                // if the current line is empty, then we may be at the end
+                if (line.len == 0) {
+                    tail_len = 0;
+                    break;
+                }
+                if (line[0] == '*') { // check if we are skipping
+                    last_data_index = new_data_index;
+                    skipping = true;
+                    diagnostic.line_number += 1;
+                    continue;
+                } else if (bytes_read > 0) { // check if we last read any data in
+                    tail_len = line.len;
+                    break;
+                }
             }
-        }
 
-        // check for a ": " sequence. this lets us:
-        // 1) keep track of the index, necessary for reversing dumps w/ autoskip
-        // 2) moves the iterator to where the raw data is
-        if ((params.postscript == false) and (running_over_index == false)) {
-            if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], ": ")) {
-                running_over_index = true;
+            diagnostic.line_number += 1;
 
-                // keep track of where we are in the data (needed for autoskip)
-                if (input_iterator.index) |idx| last_colon = idx;
-                last_data_index = new_data_index;
-                // the indexes can get out of order (small is bigger than large)
-                // if the incorrect reverse mode (hex vs binary) is set
-                if (last_newline > (last_colon - 1)) {
-                    return error.DumpParseError;
-                }
-                if (std.fmt.parseUnsigned(
-                    usize,
-                    input[last_newline..(last_colon - 1)],
-                    index_base,
-                )) |value| {
-                    new_data_index = value;
-                } else |err| switch (err) {
-                    error.InvalidCharacter => return error.DumpParseError,
-                    else => return err,
-                }
+            // setup window iterator for the line
+            var running_over_index = !params.postscript;
+            var colon_position: usize = undefined;
+            var line_iter = std.mem.window(
+                u8,
+                line,
+                window_size,
+                1,
+            );
 
-                // if we find a ": " sequence after a "\n*" from autoskip, we
-                // are back to non-null data. must write the skipped null bytes
-                if (skipping) {
-                    for (0..(new_data_index - last_data_index - params.num_columns)) |_| {
-                        try writer.writeByte(0);
-                        bytes_writen += 1;
+            // iterate and process the line
+            // TODO: consider breaking this out into a function
+            while (line_iter.next()) |slice| {
+                // look for the ": " sequence in order to grab the line's index
+                if (running_over_index) {
+                    if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], ": ")) {
+                        if (line_iter.index) |index| colon_position = index;
+                        if (std.fmt.parseUnsigned(
+                            usize,
+                            line[0..(colon_position - 1)],
+                            index_base,
+                        )) |value| {
+                            new_data_index = value;
+                            _ = line_iter.next();
+                        } else |err| switch (err) {
+                            error.InvalidCharacter => return error.DumpParseError,
+                            else => return err,
+                        }
+                        running_over_index = false;
                     }
-                    skipping = false;
+                } else {
+                    // if we have been skipping, we need to fill in the right
+                    // amount of null bytes
+                    if (skipping) {
+                        for (0..(new_data_index - last_data_index - params.num_columns)) |_| {
+                            try writer.writeByte(0);
+                            bytes_written += 1;
+                        }
+                        skipping = false;
+                    }
+                    // if we find the "  " sequence, we've hit the ASCII
+                    // representation part of the dump and can skip to the next
+                    // line
+                    if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "  ")) {
+                        break;
+                    }
+
+                    // handle arbitrary byte groupings when not in "plain" mode
+                    if (!params.postscript) if (slice[0] == ' ') continue;
+
+                    // parse the data
+                    if (params.binary) {
+                        if (convert_bin_strings(slice)) |value| {
+                            try writer.writeByte(value);
+                            bytes_written += 1;
+                            inline for (0..7) |_| _ = line_iter.next();
+                        } else |err| switch (err) {
+                            error.InvalidCharacter => return err,
+                            else => return err,
+                        }
+                    } else {
+                        if (convert_hex_strings(slice)) |value| {
+                            try writer.writeByte(value);
+                            bytes_written += 1;
+                            _ = line_iter.next();
+                        } else |err| switch (err) {
+                            error.InvalidCharacter => return err,
+                            else => |other_err| return other_err,
+                        }
+                    }
                 }
-
-                _ = input_iterator.next();
             }
-            continue;
         }
-
-        // in xxd (and this version of xxd), a regular dump is separated from
-        // the ASCII representation by two spaces. this gives us a hint!
-        if (std.mem.eql(u8, slice[0..(slice.len - (window_size - 2))], "  ")) {
-            if (input_iterator.index) |idx| {
-                last_newline = idx + params.num_columns + 2;
-                diagnostic.line_number += 1;
-            }
-            // skip over the ASCII representation
-            for (0..params.num_columns) |_| _ = input_iterator.next();
-            running_over_index = false;
-            continue;
+        // copy the remaining bytes to the front of the buffer in anticipation
+        // of the next page read
+        if (tail_len > 0) {
+            std.mem.copyForwards(
+                u8,
+                input_buffer.items[0..tail_len],
+                input_buffer.items[(input_buffer_slice.len - tail_len)..input_buffer_slice.len],
+            );
         }
+        if (bytes_read == 0) break; // reached EOF, processed everything
 
-        if (slice[0] == ' ') continue; // handle arbitrary byte groupings
-
-        if (slice[0] == '\n') {
-            if (input_iterator.index) |idx| {
-                last_newline = idx;
-                diagnostic.line_number += 1;
-            }
-            continue;
-        }
-
-        // do the conversion and print the results
-        if (params.binary) {
-            if (convert_bin_strings(slice)) |value| {
-                write_buffer = value;
-            } else |err| switch (err) {
-                error.InvalidCharacter => return err,
-                else => return err,
-            }
-            try writer.writeByte(write_buffer);
-            bytes_writen += 1;
-            inline for (0..7) |_| _ = input_iterator.next();
-        } else {
-            if (convert_hex_strings(slice)) |value| {
-                write_buffer = value;
-            } else |err| switch (err) {
-                error.InvalidCharacter => return err,
-                else => |other_err| return other_err,
-            }
-            try writer.writeByte(write_buffer);
-            bytes_writen += 1;
-            _ = input_iterator.next();
-        }
+        // read into the buffer exactly one page
+        bytes_read = try reader.read(input_buffer.items[tail_len..(tail_len + params.page_size)]);
+        // if we read nothing from the file and there is no "tail" left, we are
+        // at the end of the file
+        if (bytes_read == 0 and tail_len == 0) break;
     }
-
-    // catch if we did not print anything and raise an error
-    if (bytes_writen <= 0) return error.NothingWritten;
+    if (bytes_written <= 0) return error.NothingWritten;
 }
 
 test "bad index in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true };
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
     const malformed_input = "0000zxcv: 4c6f  Lo\n";
-
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
     try std.testing.expectError(error.DumpParseError, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }
@@ -706,14 +876,15 @@ test "bad index in reverse mode" {
 test "invalid hex character found in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true };
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
     const malformed_input = "00000000: 4c6z  L.\n";
-
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }
@@ -721,14 +892,15 @@ test "invalid hex character found in reverse mode" {
 test "invalid binary character found in reverse mode" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true, .binary = true };
+    var params = printParams{ .reverse = true, .binary = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
     const malformed_input = "00000000: 01001100 abcdefgh  L.\n";
-
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
     try std.testing.expectError(error.InvalidCharacter, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }
@@ -736,14 +908,31 @@ test "invalid binary character found in reverse mode" {
 test "writing nothing because of malformed reverse input" {
     var buffer = std.ArrayList(u8).init(std.testing.allocator);
     defer buffer.deinit();
-    var params = printParams{ .reverse = true };
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
     var diag = Diagnostic{};
-    const malformed_input = "ghijklmnopqrstuv.$";
-
+    const malformed_input = "ghijklmnopqrstuv.$\n";
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
     try std.testing.expectError(error.NothingWritten, reverse_input(
         buffer.writer(),
         &params,
-        malformed_input,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
+        &diag,
+    ));
+}
+
+test "missing newline after reading many bytes errors out" {
+    var buffer = std.ArrayList(u8).init(std.testing.allocator);
+    defer buffer.deinit();
+    var params = printParams{ .reverse = true, .page_size = std.heap.pageSize() };
+    var diag = Diagnostic{};
+    const malformed_input = "ghijklmnopqrstuv.$ long input";
+    var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
+    try std.testing.expectError(error.EndOfStream, reverse_input(
+        buffer.writer(),
+        &params,
+        std.testing.allocator,
+        malformed_input_fbs.reader(),
         &diag,
     ));
 }
