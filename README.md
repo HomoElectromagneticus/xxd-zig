@@ -12,7 +12,7 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
 
 - When using the "plain" postscript output, you may render the data in binary
 - You may reverse "plain" postscript dumps of binary and hex data
-- Speed: this program is between about 60 % and 2500 % faster than `xxd`, depending on the options used and file size
+- Speed: this program is between about 60 % and 425 % faster than `xxd`, depending on the options used and file size
 - Size: this program's binary is about three (3) times larger than `xxd`
 - Improved error handling and messaging for reverse mode
 - Reverse mode is more flexible: you don't need to exactly match the dump options in order to get a successful reversal
@@ -21,8 +21,8 @@ The original `xxd` is packaged with `vim`: [https://github.com/vim/vim/tree/mast
 
 ## Remaining to-do items
 
- - write more tests
- - choose a better name - "xzd" or "zxd" ?
+ - Write more tests
+ - Choose a better name - "xzd" or "zxd" ?
 
 ## Usage
 

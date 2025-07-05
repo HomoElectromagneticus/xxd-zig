@@ -38,7 +38,7 @@ const hexCharsetLower = "0123456789abcdef";
 
 // use a look-up-table to convert the input data into hex (is much faster than
 // the zig standard library's format function)
-fn byte_to_hex_string(input: u8, upper_case: bool) [2]u8 {
+fn byteToHexString(input: u8, upper_case: bool) [2]u8 {
     var output_string: [2]u8 = undefined;
     // pick the LUT depending on the user's choice of upper or lower case
     if (upper_case) {
@@ -55,7 +55,7 @@ test "confirm upper case hex convertion works" {
     const test_char = 'L';
     try std.testing.expect(std.mem.eql(
         u8,
-        &byte_to_hex_string(test_char, true),
+        &byteToHexString(test_char, true),
         "4C",
     ));
 }
@@ -64,7 +64,7 @@ test "confirm lower case hex convertion works" {
     const test_char = 'm';
     try std.testing.expect(std.mem.eql(
         u8,
-        &byte_to_hex_string(test_char, false),
+        &byteToHexString(test_char, false),
         "6d",
     ));
 }
@@ -116,17 +116,20 @@ fn colorize(writer: anytype, color: Color) !void {
     }
 }
 
-// tell the terminal to go back to standard color
-fn uncolor(writer: anytype) !void {
+// tell the terminal to go back to standard color. the "inline" flag here does
+// make the code run faster per benchmark testing
+inline fn uncolor(writer: anytype) !void {
     try writer.writeAll("\u{001b}[0m");
 }
 
-fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usize {
+fn printColumns(writer: anytype, params: *printParams, input: []const u8) !usize {
     // number of printed characters of dumped input (not including the index
     // markers on the left!)
     var num_printed_chars: usize = 0;
     // number of spaces for lining up the ASCII characters in the final row
     var num_spaces: usize = 0;
+
+    var current_color: ?Color = null; // helpful for optimizing color output
 
     // split the input into groups, where size is given by the print parameters
     var groups_iterator = std.mem.window(
@@ -155,21 +158,22 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
                 // no color for binary ouput - this is what xxd does as well
                 num_printed_chars += try writer.write(binCharset[group[i]]);
             } else {
+                // only update the color if necessary
                 if (params.colorize) {
-                    switch (group[i]) {
-                        // null bytes should be white
-                        0 => try colorize(writer, Color.white),
-                        // printable ASCII characters should be green
-                        32...126 => try colorize(writer, Color.green),
-                        // values over 0x7F should be red
-                        127...255 => try colorize(writer, Color.red),
-                        // everything else should be yellow
-                        else => try colorize(writer, Color.yellow),
+                    const new_color = switch (group[i]) {
+                        0 => Color.white, // null bytes are white
+                        32...126 => Color.green, // printable ASCII is green
+                        127...255 => Color.red, // values over 0x7F are red
+                        else => Color.yellow, // all else is yellow
+                    };
+                    if (current_color != new_color) {
+                        try colorize(writer, new_color);
+                        current_color = new_color;
                     }
                 }
                 // print the hex value of the character (no need for print()'s
                 // formatting, we can write directly to stdout or the file)
-                const buf = byte_to_hex_string(group[i], params.upper_case);
+                const buf = byteToHexString(group[i], params.upper_case);
                 num_printed_chars += try writer.write(&buf);
             }
         }
@@ -187,7 +191,7 @@ fn print_columns(writer: anytype, params: *printParams, input: []const u8) !usiz
         // size, we need an extra space or the ASCII won't line up right
         if (params.num_columns % params.group_size != 0) num_spaces += 1;
 
-        for (0..num_spaces) |_| try writer.writeAll(" ");
+        for (0..num_spaces) |_| try writer.writeByte(' ');
     }
     // add an extra space to copy xxd (also helps decoding reverse dumps)
     try writer.writeByte(' ');
@@ -203,7 +207,7 @@ test "validate non-colorised lower-case hex output" {
         .num_columns = 4,
     };
     const test_input = [_]u8{ 'A', 0, '0', '*' };
-    _ = try print_columns(
+    _ = try printColumns(
         list.writer(),
         &print_params,
         &test_input,
@@ -222,7 +226,7 @@ test "validate non-colorised upper-case hex output" {
         .num_columns = 4,
     };
     const test_input = [_]u8{ '-', 127, '1', '*' };
-    _ = try print_columns(
+    _ = try printColumns(
         list.writer(),
         &print_params,
         &test_input,
@@ -241,7 +245,7 @@ test "validate non-colorised little-endian lower-case hex output" {
         .little_endian = true,
     };
     const test_input = [_]u8{ '-', 127, '1', '*' };
-    _ = try print_columns(
+    _ = try printColumns(
         list.writer(),
         &print_params,
         &test_input,
@@ -252,21 +256,28 @@ test "validate non-colorised little-endian lower-case hex output" {
 }
 
 // for the ASCII output on the right-hand-side
-fn print_ascii(writer: anytype, color: bool, input: []const u8) !void {
+fn printASCII(writer: anytype, color: bool, input: []const u8) !void {
+    var current_color: ?Color = null;
+
     for (input) |raw_char| {
         // handle color
         if (color) {
-            switch (raw_char) {
-                0 => try colorize(writer, Color.white),
-                32...126 => try colorize(writer, Color.green),
-                127...255 => try colorize(writer, Color.red),
-                else => try colorize(writer, Color.yellow),
+            const new_color = switch (raw_char) {
+                0 => Color.white, // null bytes are yellow
+                32...126 => Color.green, // printable ASCII is green
+                127...255 => Color.red, // values over 0x7F are red
+                else => Color.yellow, // all else is yellow
+            };
+            if (current_color != new_color) {
+                try colorize(writer, new_color);
+                current_color = new_color;
             }
         }
         // actual character output (with non-printable characters as '.')
-        switch (raw_char) {
-            32...126 => try writer.writeByte(raw_char),
-            else => try writer.writeByte('.'),
+        if (raw_char >= 32 and raw_char <= 126) {
+            try writer.writeByte(raw_char);
+        } else {
+            try writer.writeByte('.');
         }
     }
 }
@@ -275,7 +286,7 @@ test "validate non-colorised ASCII output" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     const test_input = [_]u8{ 'A', 'b', '0', '1', 16, '$', 250 };
-    try print_ascii(
+    try printASCII(
         list.writer(),
         false,
         &test_input,
@@ -283,7 +294,7 @@ test "validate non-colorised ASCII output" {
     try std.testing.expect(std.mem.eql(u8, list.items, "Ab01.$."));
 }
 
-fn print_plain_dump(
+fn printPlainDump(
     writer: anytype,
     params: *printParams,
     input: []const u8,
@@ -294,7 +305,7 @@ fn print_plain_dump(
             try writer.writeAll(binCharset[character]);
             bytes_printed.* += 1;
         } else {
-            try writer.writeAll(&byte_to_hex_string(character, params.upper_case));
+            try writer.writeAll(&byteToHexString(character, params.upper_case));
             bytes_printed.* += 1;
         }
         if (bytes_printed.* % params.num_columns == 0) {
@@ -305,13 +316,13 @@ fn print_plain_dump(
     }
 }
 
-test "validate plain hex dump for correct hex translation" {
+test "validate plain hex dump for correct hex translation and length" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     var print_params = printParams{ .colorize = false };
     const test_input = [_]u8{ 'L', 'o', 'r', 'e', 'm' };
     var bytes_printed: usize = 0;
-    try print_plain_dump(
+    try printPlainDump(
         list.writer(),
         &print_params,
         &test_input,
@@ -320,25 +331,7 @@ test "validate plain hex dump for correct hex translation" {
     try std.testing.expect(std.mem.eql(u8, list.items, "4c6f72656d"));
 }
 
-test "validate plain hex dump for correct length" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    var print_params = printParams{
-        .colorize = false,
-        .num_columns = 8,
-    };
-    const test_input = [_]u8{ 'L', 'o', 'r', 'e', 'm', ' ', 'i', 'p', 's' };
-    var bytes_printed: usize = 0;
-    try print_plain_dump(
-        list.writer(),
-        &print_params,
-        &test_input,
-        &bytes_printed,
-    );
-    try std.testing.expect(list.items.len == 19);
-}
-
-test "validate plain binary dump for correct binary translation" {
+test "validate plain binary dump for correct binary translation and length" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     var print_params = printParams{
@@ -348,7 +341,7 @@ test "validate plain binary dump for correct binary translation" {
     };
     const test_input = [_]u8{ 'L', 'o' };
     var bytes_printed: usize = 0;
-    try print_plain_dump(
+    try printPlainDump(
         list.writer(),
         &print_params,
         &test_input,
@@ -357,46 +350,21 @@ test "validate plain binary dump for correct binary translation" {
     try std.testing.expect(std.mem.eql(u8, list.items, "0100110001101111"));
 }
 
-test "validate plain binary dump for correct length" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    var print_params = printParams{
-        .colorize = false,
-        .binary = true,
-        .num_columns = 3,
-    };
-    const test_input = [_]u8{ 'L', 'o', 0, '%' };
-    var bytes_printed: usize = 0;
-    try print_plain_dump(
-        list.writer(),
-        &print_params,
-        &test_input,
-        &bytes_printed,
-    );
-    try std.testing.expect(list.items.len == 33);
+fn printCIncStyleHeader(writer: anytype, params: *printParams) !void {
+    // don't print a header if there is no name to use
+    if (params.c_style_name.len != 0) {
+        try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
+    } else {
+        try writer.writeAll("  ");
+    }
 }
 
-fn print_c_inc_style(
+fn printCIncStyle(
     writer: anytype,
     params: *printParams,
     input: []const u8,
     bytes_printed: *usize,
 ) !void {
-    // print the header
-    if (params.c_style_name.len != 0 and bytes_printed.* == 0) {
-        if (params.c_style_capitalise) {
-            try writer.writeAll("unsigned char ");
-            for (params.c_style_name) |char| {
-                try writer.writeByte(std.ascii.toUpper(char));
-            }
-            try writer.writeAll("[] = {\n  ");
-        } else {
-            try writer.print("unsigned char {s}[] = {{\n  ", .{params.c_style_name});
-        }
-    } else {
-        try writer.writeAll("  ");
-    }
-    // print the actual data
     for (input, 0..) |character, index| {
         // handle linebreaks and the indenting to look like xxd
         if (bytes_printed.* % (params.num_columns) == 0 and index != 0) {
@@ -408,30 +376,30 @@ fn print_c_inc_style(
             bytes_printed.* += 1;
         } else {
             try writer.writeAll("0x");
-            try writer.writeAll(&byte_to_hex_string(character, params.upper_case));
+            try writer.writeAll(&byteToHexString(character, params.upper_case));
             bytes_printed.* += 1;
         }
         if (index != (input.len - 1)) try writer.writeAll(", ");
     }
 }
 
-fn print_c_inc_style_end(
+fn printCIncStyleEnd(
     writer: anytype,
     params: *printParams,
     bytes_printed: *usize,
 ) !void {
-    if (params.c_style_capitalise) {
-        try writer.writeAll("\n};\nunsigned int ");
-        for (params.c_style_name) |char| {
-            try writer.writeByte(std.ascii.toUpper(char));
+    if (params.c_style_name.len != 0) {
+        if (params.c_style_capitalise) {
+            try writer.print("\n}};\nunsigned int {s}_LEN = {d};\n", .{ params.c_style_name, bytes_printed.* });
+        } else {
+            try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, bytes_printed.* });
         }
-        try writer.print("_LEN = {d};\n", .{bytes_printed.*});
     } else {
-        try writer.print("\n}};\nunsigned int {s}_len = {d};\n", .{ params.c_style_name, bytes_printed.* });
+        try writer.writeByte('\n');
     }
 }
 
-pub fn print_output(
+pub fn printOutput(
     writer: anytype,
     params: *printParams,
     allocator: std.mem.Allocator,
@@ -496,7 +464,7 @@ pub fn print_output(
 
         // if the user asked for plain dump, just dump everything no formatting
         if (params.postscript) {
-            try print_plain_dump(
+            try printPlainDump(
                 writer,
                 params,
                 input_buffer_slice,
@@ -506,16 +474,21 @@ pub fn print_output(
             continue;
         }
 
-        // if the user asked for a c import style ouput, use that function
+        // if the user asked for a c include style ouput, use that function. it
+        // tests as more performant to split the sections of the this dump stle
+        // into separate functions like this
         if (params.c_style) {
-            try print_c_inc_style(
+            if (bytes_printed == 0) {
+                try printCIncStyleHeader(writer, params);
+            }
+            try printCIncStyle(
                 writer,
                 params,
                 input_buffer_slice,
                 &bytes_printed,
             );
             if (bytes_read < params.page_size) {
-                try print_c_inc_style_end(
+                try printCIncStyleEnd(
                     writer,
                     params,
                     &bytes_printed,
@@ -571,17 +544,18 @@ pub fn print_output(
                 continue;
             }
 
-            // TODO: think about a faster way to print these indexes
             // print the file position in hex (default) or decimal
             if (params.decimal) {
                 try writer.print("{d:0>8}: ", .{file_pos});
             } else {
                 try writer.print("{x:0>8}: ", .{file_pos});
             }
-            // TODO: keep track of bytes_written here as well!
-            file_pos += try print_columns(writer, params, slice);
-            try print_ascii(writer, params.colorize, slice);
-            try writer.writeAll("\n");
+
+            // print the dumped data and the ASCII representation
+            file_pos += try printColumns(writer, params, slice);
+            bytes_printed += file_pos;
+            try printASCII(writer, params.colorize, slice);
+            try writer.writeByte('\n');
             if (params.colorize) try uncolor(writer); //reset color for next line
         }
 
@@ -598,7 +572,7 @@ pub fn print_output(
     }
 }
 
-test "validate seek and length options" {
+test "validate seek and length options for normal dump" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     var print_params = printParams{
@@ -611,7 +585,7 @@ test "validate seek and length options" {
     };
     const test_input = "Lorem ";
     var test_input_fbs = std.io.fixedBufferStream(test_input);
-    try print_output(
+    try printOutput(
         list.writer(),
         &print_params,
         std.testing.allocator,
@@ -620,7 +594,7 @@ test "validate seek and length options" {
     try std.testing.expect(std.mem.eql(u8, list.items, "00000001: 6f72 656d            orem\n"));
 }
 
-fn convert_hex_strings(input: []const u8) !u8 {
+fn convertHexStrings(input: []const u8) !u8 {
     // the hex representation of u8 is always two chacters long!
     if (input.len != 2) return error.TypeError;
 
@@ -642,15 +616,15 @@ fn convert_hex_strings(input: []const u8) !u8 {
 
 test "test hex string coverter on the line feed byte (upper-case hex)" {
     const test_array = [_]u8{ '0', 'A' };
-    try std.testing.expectEqual('\n', convert_hex_strings(&test_array));
+    try std.testing.expectEqual('\n', convertHexStrings(&test_array));
 }
 
 test "test hex string coverter on a byte that's beyond ASCII (lower-case hex)" {
     const test_array = [_]u8{ 'f', '9' };
-    try std.testing.expectEqual(249, convert_hex_strings(&test_array));
+    try std.testing.expectEqual(249, convertHexStrings(&test_array));
 }
 
-fn convert_bin_strings(input: []const u8) !u8 {
+fn convertBinStrings(input: []const u8) !u8 {
     // the binary representation of a u8 is always eight characters long!
     if (input.len != 8) return error.TypeError;
 
@@ -671,15 +645,15 @@ fn convert_bin_strings(input: []const u8) !u8 {
 
 test "test binary string converter on an ASCII character" {
     const test_string = "01011010";
-    try std.testing.expectEqual('Z', convert_bin_strings(test_string));
+    try std.testing.expectEqual('Z', convertBinStrings(test_string));
 }
 
 test "test binary string converter outside the ASCII range" {
     const test_string = "11111111";
-    try std.testing.expectEqual(0xff, convert_bin_strings(test_string));
+    try std.testing.expectEqual(0xff, convertBinStrings(test_string));
 }
 
-fn find_first_char(target_slice: []const u8, char: u8) !usize {
+fn findFirstChar(target_slice: []const u8, char: u8) !usize {
     for (0..(target_slice.len - 1)) |index| {
         if (target_slice[index] == char) return index;
     } else {
@@ -687,7 +661,7 @@ fn find_first_char(target_slice: []const u8, char: u8) !usize {
     }
 }
 
-pub fn reverse_input(
+pub fn reverseInput(
     writer: anytype,
     params: *printParams,
     allocator: std.mem.Allocator,
@@ -722,10 +696,10 @@ pub fn reverse_input(
     // allocate a whole page of bytes
     _ = try input_buffer.addManyAsSlice(allocator, params.page_size);
     // try to read a whole page from the input (stdin, a file, or a string)
-    // this variable will store how many bytes reader (useful below)
+    // the variable will store how many bytes read (useful below)
     var bytes_read = try reader.read(input_buffer.items);
     // determine how long a line is in the dataset
-    const normal_line_length = try find_first_char(input_buffer.items, '\n');
+    const normal_line_length = try findFirstChar(input_buffer.items, '\n');
     // in order to handle data with breaks in the middle of lines, we need the
     // buffer to be the size of a page + the length of a line minus one byte
     _ = try input_buffer.addManyAsSlice(allocator, normal_line_length - 1);
@@ -746,8 +720,7 @@ pub fn reverse_input(
             // if the current line is shorter than a normal line, we need to
             // check what is going on
             if (line.len < normal_line_length) {
-                // if the current line is empty, then we may be at the end
-                if (line.len == 0) {
+                if (line.len == 0) { // are we at the end of the data?
                     tail_len = 0;
                     break;
                 }
@@ -756,7 +729,7 @@ pub fn reverse_input(
                     skipping = true;
                     diagnostic.line_number += 1;
                     continue;
-                } else if (bytes_read > 0) { // check if we last read any data in
+                } else if (bytes_read > 0) { // did we read any data in recently?
                     tail_len = line.len;
                     break;
                 }
@@ -816,7 +789,7 @@ pub fn reverse_input(
 
                     // parse the data
                     if (params.binary) {
-                        if (convert_bin_strings(slice)) |value| {
+                        if (convertBinStrings(slice)) |value| {
                             try writer.writeByte(value);
                             bytes_written += 1;
                             inline for (0..7) |_| _ = line_iter.next();
@@ -825,7 +798,7 @@ pub fn reverse_input(
                             else => return err,
                         }
                     } else {
-                        if (convert_hex_strings(slice)) |value| {
+                        if (convertHexStrings(slice)) |value| {
                             try writer.writeByte(value);
                             bytes_written += 1;
                             _ = line_iter.next();
@@ -864,7 +837,7 @@ test "bad index in reverse mode" {
     var diag = Diagnostic{};
     const malformed_input = "0000zxcv: 4c6f  Lo\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-    try std.testing.expectError(error.DumpParseError, reverse_input(
+    try std.testing.expectError(error.DumpParseError, reverseInput(
         buffer.writer(),
         &params,
         std.testing.allocator,
@@ -880,7 +853,7 @@ test "invalid hex character found in reverse mode" {
     var diag = Diagnostic{};
     const malformed_input = "00000000: 4c6z  L.\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-    try std.testing.expectError(error.InvalidCharacter, reverse_input(
+    try std.testing.expectError(error.InvalidCharacter, reverseInput(
         buffer.writer(),
         &params,
         std.testing.allocator,
@@ -896,7 +869,7 @@ test "invalid binary character found in reverse mode" {
     var diag = Diagnostic{};
     const malformed_input = "00000000: 01001100 abcdefgh  L.\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-    try std.testing.expectError(error.InvalidCharacter, reverse_input(
+    try std.testing.expectError(error.InvalidCharacter, reverseInput(
         buffer.writer(),
         &params,
         std.testing.allocator,
@@ -912,7 +885,7 @@ test "writing nothing because of malformed reverse input" {
     var diag = Diagnostic{};
     const malformed_input = "ghijklmnopqrstuv.$\n";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-    try std.testing.expectError(error.NothingWritten, reverse_input(
+    try std.testing.expectError(error.NothingWritten, reverseInput(
         buffer.writer(),
         &params,
         std.testing.allocator,
@@ -928,7 +901,7 @@ test "missing newline after reading many bytes errors out" {
     var diag = Diagnostic{};
     const malformed_input = "ghijklmnopqrstuv.$ long input";
     var malformed_input_fbs = std.io.fixedBufferStream(malformed_input);
-    try std.testing.expectError(error.EndOfStream, reverse_input(
+    try std.testing.expectError(error.EndOfStream, reverseInput(
         buffer.writer(),
         &params,
         std.testing.allocator,

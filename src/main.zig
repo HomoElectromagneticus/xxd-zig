@@ -55,7 +55,7 @@ const no_effect =
 ;
 
 // only works on linux & MacOS. on windows, it will simply always return 80
-fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
+fn getTerminalWidth(terminal_handle: std.posix.fd_t) usize {
     var winsize: std.posix.system.winsize = undefined;
     const errno = std.posix.system.ioctl(
         terminal_handle,
@@ -66,6 +66,27 @@ fn get_terminal_width(terminal_handle: std.posix.fd_t) usize {
         return winsize.col;
     } else {
         return 80;
+    }
+}
+
+fn processCStyleName(writer: anytype, params: *lib.printParams) !void {
+    for (params.c_style_name, 0..) |char, index| {
+        // in C, the first character of a variable name cannot be a digit
+        if (index == 0) {
+            if (char > 47 and char < 58) try writer.writeAll("__");
+        }
+        switch (char) {
+            48...57 => try writer.writeByte(char), // digits
+            65...90 => try writer.writeByte(char), // uppercase letters
+            97...122 => { // lowercase letters
+                if (params.c_style_capitalise) {
+                    try writer.writeByte(std.ascii.toUpper(char));
+                } else {
+                    try writer.writeByte(char);
+                }
+            },
+            else => try writer.writeByte('_'),
+        }
     }
 }
 
@@ -156,7 +177,7 @@ pub fn main() !u8 {
         const help_options = clap.HelpOptions{
             .description_on_new_line = false,
             .description_indent = 0,
-            .max_width = get_terminal_width(std.io.getStdOut().handle),
+            .max_width = getTerminalWidth(std.io.getStdOut().handle),
             .spacing_between_parameters = 0,
         };
         try clap.help(
@@ -294,7 +315,7 @@ pub fn main() !u8 {
         var input_string_stream = std.io.fixedBufferStream(s);
 
         // print the output
-        lib.print_output(
+        lib.printOutput(
             stdout_buf,
             &print_params,
             arena.allocator(),
@@ -338,8 +359,19 @@ pub fn main() !u8 {
     };
     defer file.close(); // make sure the file closes at the end
 
+    // rewrite the variable name for the C-include style dump (if necessary)
+    var name_buffer: std.ArrayListUnmanaged(u8) = .empty;
+    defer name_buffer.deinit(arena.allocator());
+    if (print_params.c_style_name.len != 0) {
+        try processCStyleName(
+            name_buffer.writer(arena.allocator()),
+            &print_params,
+        );
+        print_params.c_style_name = try name_buffer.toOwnedSlice(arena.allocator());
+    }
+
     if (print_params.reverse) {
-        lib.reverse_input(
+        lib.reverseInput(
             stdout_buf,
             &print_params,
             arena.allocator(),
@@ -369,7 +401,7 @@ pub fn main() !u8 {
             return 1;
         };
     } else {
-        lib.print_output(
+        lib.printOutput(
             stdout_buf,
             &print_params,
             arena.allocator(),
